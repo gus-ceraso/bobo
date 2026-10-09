@@ -3,6 +3,9 @@ package exa
 import "fmt"
 
 func (c *Client) Fetch(url string) (string, error) {
+	if text, ok := c.Cache.Get(url); ok {
+		return text, nil
+	}
 	var reqObj struct {
 		URLs []string `json:"urls"`
 		Text bool     `json:"text"`
@@ -20,5 +23,6 @@ func (c *Client) Fetch(url string) (string, error) {
 	if len(resObj.Results) == 0 {
 		return "", nil
 	}
+	c.Cache.Add(url, resObj.Results[0].Text)
 	return resObj.Results[0].Text, nil
 }

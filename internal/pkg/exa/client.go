@@ -7,10 +7,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
+
+	"github.com/hashicorp/golang-lru/v2/expirable"
 )
 
 type Client struct {
 	Token string
+	Cache *expirable.LRU[string, string]
+}
+
+func NewClient(token string) *Client {
+	return &Client{
+		Token: token,
+		Cache: expirable.NewLRU[string, string](100, nil, 30*time.Minute),
+	}
 }
 
 func (c *Client) do(method, path string, reqObj, resObj any) error {
@@ -37,14 +48,12 @@ func (c *Client) do(method, path string, reqObj, resObj any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		var errObj struct {
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
+			Error string `json:"error"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&errObj); err != nil && !errors.Is(err, io.EOF) {
 			return fmt.Errorf("JSON decoding error response object: %s", err)
 		}
-		return fmt.Errorf("%d %s: %s", resp.StatusCode, http.StatusText(resp.StatusCode), errObj.Error.Message)
+		return fmt.Errorf("%d %s: %s", resp.StatusCode, http.StatusText(resp.StatusCode), errObj.Error)
 	}
 	if resObj != nil {
 		if err := json.NewDecoder(resp.Body).Decode(resObj); err != nil {

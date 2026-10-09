@@ -26,5 +26,8 @@ func (c *Client) Search(query string) ([]SearchResult, error) {
 	if err := c.do("POST", "/search", &reqObj, &resObj); err != nil {
 		return nil, fmt.Errorf("searching: %s", err)
 	}
+	for _, r := range resObj.Results {
+		c.Cache.Add(r.URL, r.Text)
+	}
 	return resObj.Results, nil
 }
