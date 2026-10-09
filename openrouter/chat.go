@@ -40,6 +40,9 @@ func (c *Client) NewSession(model, effort, systemPrompt string, procedures []Pro
 	}
 	var resObj struct {
 		Data struct {
+			Architecture struct {
+				InputModalities []string `json:"input_modalities"`
+			} `json:"architecture"`
 			ContextLength int `json:"context_length"`
 			Reasoning     struct {
 				SupportedEfforts []string `json:"supported_efforts"`
@@ -61,6 +64,15 @@ func (c *Client) NewSession(model, effort, systemPrompt string, procedures []Pro
 			return nil, fmt.Errorf("invalid arguments: effort not supported by model")
 		}
 	}
+	images := false
+	for _, im := range resObj.Data.Architecture.InputModalities {
+		if im == "image" {
+			images = true
+		}
+	}
+	if !images {
+		return nil, fmt.Errorf("invalid arguments: images not supported by model")
+	}
 	var s Session
 	s.Model = model
 	s.Effort = effort
@@ -77,6 +89,9 @@ func (c *Client) Send(s *Session, prompt string) (reply string, err error) {
 	var reqObj struct {
 		Model  string  `json:"model"`
 		Effort string  `json:"reasoning_effort"`
+		CacheControl struct {
+
+		} `json:"cache_control"`
 		Events []Event `json:"messages"`
 		Tools  []struct {
 			Type   string         `json:"type"`
