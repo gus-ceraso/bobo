@@ -3,6 +3,7 @@ package openrouter
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type Procedure interface {
@@ -20,10 +21,10 @@ type Event struct {
 			Name      string `json:"name"`
 			Arguments string `json:"arguments"`
 		} `json:"function"`
-	} `json:"tool_calls"`
-	CallID           string `json:"tool_call_id"`
-	Reasoning        string `json:"reasoning"`
-	ReasoningDetails any    `json:"reasoning_details"`
+	} `json:"tool_calls,omitempty"`
+	CallID           string `json:"tool_call_id,omitempty"`
+	Reasoning        string `json:"reasoning,omitempty"`
+	ReasoningDetails any    `json:"reasoning_details,omitempty"`
 }
 
 type Session struct {
@@ -89,11 +90,11 @@ func (c *Client) NewSession(model, effort, systemPrompt string, cache bool, proc
 func (c *Client) Send(s *Session, prompt string) (reply string, err error) {
 	s.Events = append(s.Events, Event{Type: "user", Content: prompt})
 	var reqObj struct {
-		Model        string `json:"model"`
-		Effort       string `json:"reasoning_effort"`
-		CacheControl struct {
-			Type string `json:"type,omitempty"`
-			TTL  string `json:"ttl,omitempty"`
+		Model        string `json:"model,omitempty"`
+		Effort       string `json:"reasoning_effort,omitempty"`
+		CacheControl *struct {
+			Type string `json:"type"`
+			TTL  string `json:"ttl"`
 		} `json:"cache_control,omitempty"`
 		Events []Event `json:"messages"`
 		Tools  []struct {
@@ -105,8 +106,10 @@ func (c *Client) Send(s *Session, prompt string) (reply string, err error) {
 	reqObj.Model = s.Model
 	reqObj.Effort = s.Effort
 	if s.Cache {
-		reqObj.CacheControl.Type = "ephemeral"
-		reqObj.CacheControl.TTL = "5m"
+		reqObj.CacheControl = &struct {
+			Type string `json:"type"`
+			TTL  string `json:"ttl"`
+		}{"ephemeral", "5m"}
 	}
 	reqObj.Tools = make([]struct {
 		Type   string         `json:"type"`
@@ -132,7 +135,7 @@ func (c *Client) Send(s *Session, prompt string) (reply string, err error) {
 			return reply, fmt.Errorf("sending prompt: %s", err)
 		}
 		if len(resObj.Choices) == 0 {
-			return
+			return "", fmt.Errorf("no choices")
 		}
 		if r := resObj.Choices[0].FinishReason; r != "" && r != "tool_calls" && r != "stop" {
 			return reply, fmt.Errorf("finish reason: %s", r)
@@ -153,30 +156,40 @@ func (c *Client) Send(s *Session, prompt string) (reply string, err error) {
 			return
 		}
 		for _, call := range e.Calls {
+			found := false
 			for _, procedure := range s.Procedures {
 				schema := procedure.Schema()
-				if schema["name"] == call.Procedure.Name {
+				if schema["name"].(string) == call.Procedure.Name {
+					found = true
 					var args map[string]any
-					var retv string
-					if err := json.Unmarshal([]byte(call.Procedure.Arguments), &args); err != nil {
-						retv = "invalid arguments: expected valid JSON for " + call.Procedure.Name
+					dec := json.NewDecoder(strings.NewReader(call.Procedure.Arguments))
+					dec.UseNumber()
+					if err := dec.Decode(&args); err != nil {
+						s.Events = append(s.Events, Event{
+							Type:    "tool",
+							Content: "{\"error\": \"invalid arguments: JSON decoding arguments\"}",
+							CallID:  call.ID,
+						})
 					} else {
-						ret, err := json.Marshal(procedure.Call(args))
-						if err != nil {
-							return reply, fmt.Errorf("JSON encoding %s return: %s", schema["name"], err)
-						}
-						retv = string(ret)
+						s.Events = append(s.Events, Event{
+							Type:    "tool",
+							Content: procedure.Call(args),
+							CallID:  call.ID,
+						})
 					}
-					s.Events = append(s.Events, Event{
-						Type:    "tool",
-						Content: retv,
-						CallID:  call.ID,
-					})
 					break
 				}
 			}
+			if !found {
+				s.Events = append(s.Events, Event{
+					Type:    "tool",
+					Content: "{\"error\": \"procedure not found\"}",
+					CallID:  call.ID,
+				})
+				continue
+			}
 		}
-		if s.Limit-resObj.Usage.Total <= 1 {
+		if resObj.Usage.Total >= s.Limit {
 			s.Events = append(s.Events, Event{
 				Type:    "developer",
 				Content: "Context is nearly full. DO NOT call more tools. Give the user a handoff prompt summarizing the task, progress, and next steps.",

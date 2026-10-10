@@ -51,40 +51,13 @@ func (r *Read) Call(args map[string]any) any {
 		Total     int    `json:"total,omitempty"`
 	}
 
-	pathArg, ok := args["path"]
-	if !ok {
-		metadata.Error = "invalid arguments: missing path"
+	metadata.Path = argString(args, "path")
+	if metadata.Path == "" {
+		metadata.Error = "invalid arguments: missing path string"
 		return enc(metadata)
 	}
-	metadata.Path, ok = pathArg.(string)
-	if !ok {
-		metadata.Error = "invalid arguments: path is not a string"
-		return enc(metadata)
-	}
-	offsetArg, ok := args["offset"]
-	if ok {
-		metadata.Offset, ok = offsetArg.(int)
-		if !ok {
-			metadata.Error = "invalid arguments: offset is not a number"
-			return enc(metadata)
-		}
-		if metadata.Offset < 1 {
-			metadata.Error = "invalid arguments: offset is less than 1"
-			return enc(metadata)
-		}
-	}
-	limitArg, ok := args["limit"]
-	if ok {
-		metadata.Limit, ok = limitArg.(int)
-		if !ok {
-			metadata.Error = "invalid arguments: limit is not a number"
-			return enc(metadata)
-		}
-		if metadata.Limit < 1 {
-			metadata.Error = "invalid arguments: limit is less than 1"
-			return enc(metadata)
-		}
-	}
+	metadata.Offset = argInt(args, "offset")
+	metadata.Limit = argInt(args, "limit")
 
 	if !r.HiddenFiles && hasHiddenComponent(metadata.Path) {
 		metadata.Error = "invalid arguments: hidden path not allowed"
@@ -224,6 +197,12 @@ func (r *Read) Call(args map[string]any) any {
 		return ret
 	}
 
+	if metadata.Offset == 0 {
+		metadata.Offset = 1
+	}
+	if metadata.Limit == 0 {
+		metadata.Limit = 1000
+	}
 	var lines []string
 	s := bufio.NewScanner(file)
 	var n int

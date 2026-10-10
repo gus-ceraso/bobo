@@ -3,12 +3,41 @@ package procedure
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
 )
+
+func argString(m map[string]any, k string) string {
+	v, ok := m[k]
+	if !ok {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
+func argInt(m map[string]any, k string) int {
+	v, ok := m[k]
+	if !ok {
+		return 0
+	}
+	n, ok := v.(json.Number)
+	if !ok {
+		return 0
+	}
+	i, err := n.Int64()
+	if err != nil {
+		return 0
+	}
+	return int(i)
+}
 
 func enc(obj any) string {
 	b, err := json.Marshal(obj)
@@ -32,13 +61,14 @@ func mediaType(file io.ReadSeeker) (string, error) {
 		return "", fmt.Errorf("lseek: %s", err)
 	}
 	head := make([]byte, 512)
-	if _, err := io.ReadFull(file, head); err != nil {
+	n, err := io.ReadFull(file, head)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
 		return "", fmt.Errorf("read: %s", err)
 	}
 	if _, err := file.Seek(0, 0); err != nil {
 		return "", fmt.Errorf("lseek: %s", err)
 	}
-	return http.DetectContentType(head), nil
+	return http.DetectContentType(head[:n]), nil
 }
 
 func containsAny(s string, substrs ...string) bool {
@@ -51,5 +81,5 @@ func containsAny(s string, substrs ...string) bool {
 }
 
 func encImage(mediaType string, content []byte) string {
-	return "data:" + mediaType + ";base64;" + base64.StdEncoding.EncodeToString(content)
+	return "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(content)
 }
