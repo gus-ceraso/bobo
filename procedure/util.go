@@ -1,6 +1,7 @@
 package procedure
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -38,4 +39,17 @@ func mediaType(file io.ReadSeeker) (string, error) {
 		return "", fmt.Errorf("lseek: %s", err)
 	}
 	return http.DetectContentType(head), nil
+}
+
+func containsAny(s string, substrs ...string) bool {
+	for _, substr := range substrs {
+		if strings.Contains(s, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func encImage(mediaType string, content []byte) string {
+	return "data:" + mediaType + ";base64;" + base64.StdEncoding.EncodeToString(content)
 }

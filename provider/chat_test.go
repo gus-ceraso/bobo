@@ -59,7 +59,7 @@ func TestEventLoop(t *testing.T) {
 		t.Skip("skipping openrouter event loop test because OPENROUTER_API_KEY is missing")
 	}
 	c := Client{Token: token}
-	s, err := c.NewSession("openai/gpt-6-luna", "low", "You are a helpful assistant.", []Procedure{GetWeather{}})
+	s, err := c.NewSession("openai/gpt-6-luna", "low", "You are a helpful assistant.", false, []Procedure{GetWeather{}})
 	if err != nil {
 		t.Fatalf("failed new session: %s", err)
 	}

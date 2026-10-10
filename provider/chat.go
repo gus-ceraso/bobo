@@ -29,12 +29,13 @@ type Event struct {
 type Session struct {
 	Model      string
 	Effort     string
+	Cache      bool
 	Limit      int
 	Procedures []Procedure
 	Events     []Event
 }
 
-func (c *Client) NewSession(model, effort, systemPrompt string, procedures []Procedure) (*Session, error) {
+func (c *Client) NewSession(model, effort, systemPrompt string, cache bool, procedures []Procedure) (*Session, error) {
 	if model == "" {
 		return nil, fmt.Errorf("invalid arguments: empty model")
 	}
@@ -77,6 +78,7 @@ func (c *Client) NewSession(model, effort, systemPrompt string, procedures []Pro
 	s.Model = model
 	s.Effort = effort
 	s.Limit = (3*resObj.Data.ContextLength + 1) / 4
+	s.Cache = cache
 	s.Procedures = make([]Procedure, len(procedures))
 	copy(s.Procedures, procedures)
 	s.Events = make([]Event, 1)
@@ -87,11 +89,12 @@ func (c *Client) NewSession(model, effort, systemPrompt string, procedures []Pro
 func (c *Client) Send(s *Session, prompt string) (reply string, err error) {
 	s.Events = append(s.Events, Event{Type: "user", Content: prompt})
 	var reqObj struct {
-		Model  string  `json:"model"`
-		Effort string  `json:"reasoning_effort"`
+		Model        string `json:"model"`
+		Effort       string `json:"reasoning_effort"`
 		CacheControl struct {
-
-		} `json:"cache_control"`
+			Type string `json:"type,omitempty"`
+			TTL  string `json:"ttl,omitempty"`
+		} `json:"cache_control,omitempty"`
 		Events []Event `json:"messages"`
 		Tools  []struct {
 			Type   string         `json:"type"`
@@ -101,6 +104,10 @@ func (c *Client) Send(s *Session, prompt string) (reply string, err error) {
 	}
 	reqObj.Model = s.Model
 	reqObj.Effort = s.Effort
+	if s.Cache {
+		reqObj.CacheControl.Type = "ephemeral"
+		reqObj.CacheControl.TTL = "5m"
+	}
 	reqObj.Tools = make([]struct {
 		Type   string         `json:"type"`
 		Schema map[string]any `json:"function"`

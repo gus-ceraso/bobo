@@ -1,27 +1,23 @@
 bobo, a simple language model harness
 
-Usage: bobo [-hwy] [-m model] [-e effort]
+Usage: bobo [-hcfvwy] [-m model] [-e effort] [-l logfile]
 
 Options:
-  -h          Show this help message.
-  -c          Enable explicit prompt caching.
-  -w          Enable filesystem write.
-  -s          Enable subagents.
-  -y          YOLO mode: enable write, bash, and subagents.
-  -m model    Select model (ex. openai/gpt-6-luna)
-  -e effort   Select effort (ex. xhigh)
+  -h           Show this help message.
+  -c           Enable explicit prompt caching.
+  -w           Enable filesystem write.
+  -y           YOLO mode: enable write and execution.
+  -m model     Select model (ex. openai/gpt-6-luna).
+  -e effort    Select effort (ex. xhigh).
+  -l logfile   Verbose log to file.
 
-read_text(resource string, offset int64)
-read_pdf
-read_image
-fetch_text
-fetch_pdf
-fetch_image
-write_text
-write_image
-edit_text
-edit_image
-search_web
-search_file
-search_content
-exec
+TOOLS
+read(path, offset, limit) match(regex) find(glob)
+write(path, text, oldText) move(newpath, oldpath) copy(new, old) delete(new, old)
+exec(binary, argv)
+
+Do not autoload AGENTS.md because of instruction hierarchy
+
+Prompt:
+You are a helpful assistant. Always answer in utf-8 plain text. You are in $CWD.
+
