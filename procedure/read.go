@@ -170,7 +170,7 @@ func (t *Read) Call(args map[string]any) any {
 			if i < metadata.Offset {
 				continue
 			}
-			page, err := doc.ImagePNG(i-1, 300.0)
+			page, err := doc.ImagePNG(i-1, 150.0)
 			if err != nil {
 				metadata.Error = fmt.Sprintf("extract PDF page %d: %s", i, err)
 				return enc(metadata)
