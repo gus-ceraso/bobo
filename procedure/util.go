@@ -23,6 +23,26 @@ func argString(m map[string]any, k string) string {
 	return s
 }
 
+func argList[T any](m map[string]any, k string) []T {
+	v, ok := m[k]
+	if !ok {
+		return nil
+	}
+	a, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var l []T
+	for i := 0; i < len(a); i++ {
+		t, ok := a[i].(T)
+		if !ok {
+			return nil
+		}
+		l = append(l, t)
+	}
+	return l
+}
+
 func argInt(m map[string]any, k string) int {
 	v, ok := m[k]
 	if !ok {
