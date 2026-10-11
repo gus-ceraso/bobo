@@ -14,7 +14,7 @@ Options:
 
 TOOLS
 read(path, offset, limit) grep(regex) find(regex)
-write(path, text) edit(path, oldText, newText) move(newpath, oldpath) copy(new, old) delete(new, old)
+write(path, text) edit(path, oldText, newText) move(newpath, oldpath) copy(new, old) remove(new, old)
 search(query) fetch(url)
 exec(binary, argv)
 
