@@ -31,7 +31,7 @@ func (_ *Find) Schema() map[string]any {
 				},
 				"offset": map[string]any{
 					"type":        "number",
-					"description": "1-based path line number to start. Defaults to 1.",
+					"description": "1-based result path line number to start. Defaults to 1.",
 				},
 				"limit": map[string]any{
 					"type":        "number",
@@ -55,12 +55,12 @@ func (t *Find) Call(args map[string]any) any {
 
 	metadata.Pattern = argString(args, "pattern")
 	if metadata.Pattern == "" {
-		metadata.Error = "invalid arguments: missing regexp pattern string"
+		metadata.Error = "invalid arguments: missing regular expression pattern string"
 		return enc(metadata)
 	}
 	re, err := regexp.Compile(metadata.Pattern)
 	if err != nil {
-		metadata.Error = fmt.Sprintf("compile regexp pattern: %s", err)
+		metadata.Error = fmt.Sprintf("compile regular expression pattern: %s", err)
 		return enc(metadata)
 	}
 	metadata.Path = argString(args, "path")
@@ -107,7 +107,7 @@ func (t *Find) Call(args map[string]any) any {
 		if err != nil {
 			return err
 		}
-		if !re.MatchString(p) {
+		if !re.MatchString(line) {
 			return nil
 		}
 		if i >= metadata.Offset && len(lines) < metadata.Limit {

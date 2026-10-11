@@ -87,7 +87,7 @@ func (c *Client) NewSession(model, effort, systemPrompt string, cache bool, proc
 	return &s, nil
 }
 
-func (c *Client) Send(s *Session, prompt string) (reply string, err error) {
+func (c *Client) Send(s *Session, prompt string) (string, error) {
 	s.Events = append(s.Events, Event{Type: "user", Content: prompt})
 	var reqObj struct {
 		Model        string `json:"model,omitempty"`
@@ -132,28 +132,28 @@ func (c *Client) Send(s *Session, prompt string) (reply string, err error) {
 			} `json:"usage"`
 		}
 		if err := c.do("POST", "/chat/completions", &reqObj, &resObj); err != nil {
-			return reply, fmt.Errorf("sending prompt: %s", err)
+			return "", fmt.Errorf("sending prompt: %s", err)
 		}
 		if len(resObj.Choices) == 0 {
 			return "", fmt.Errorf("no choices")
 		}
 		if r := resObj.Choices[0].FinishReason; r != "" && r != "tool_calls" && r != "stop" {
-			return reply, fmt.Errorf("finish reason: %s", r)
+			return "", fmt.Errorf("finish reason: %s", r)
 		}
 		e := resObj.Choices[0].Event
 		s.Events = append(s.Events, e)
-		switch content := e.Content.(type) {
-		case string:
-			reply += content
-		case map[string]any:
-			if maybeText, ok := content["text"]; ok {
-				if text, ok := maybeText.(string); ok {
-					reply += text
+		if len(e.Calls) == 0 {
+			switch content := e.Content.(type) {
+			case string:
+				return content, nil
+			case map[string]any:
+				if maybeText, ok := content["text"]; ok {
+					if text, ok := maybeText.(string); ok {
+						return text, nil
+					}
 				}
 			}
-		}
-		if len(e.Calls) == 0 {
-			return
+			return "", nil
 		}
 		for _, call := range e.Calls {
 			found := false

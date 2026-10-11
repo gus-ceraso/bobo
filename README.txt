@@ -1,4 +1,4 @@
-bobo, a simple language model harness
+bobo, a simple and portable harness for language models
 
 Usage: bobo [-hcfvwy] [-m model] [-e effort] [-l logfile]
 
@@ -12,8 +12,8 @@ Options:
   -l logfile   Verbose log to file.
 
 TOOLS
-read(path, offset, limit) match(regex) find(glob)
-write(path, text, oldText) move(newpath, oldpath) copy(new, old) delete(new, old)
+read(path, offset, limit) grep(regex) find(regex)
+write(path, text) edit(path, oldText, newText) move(newpath, oldpath) copy(new, old) delete(new, old)
 exec(binary, argv)
 
 Models must have image support
