@@ -22,12 +22,12 @@ func (_ *Write) Schema() map[string]any {
 					"type":        "string",
 					"description": "File path to write.",
 				},
-				"content": map[string]any{
+				"text": map[string]any{
 					"type":        "string",
 					"description": "UTF-8 text content to write.",
 				},
 			},
-			"required": []string{"path", "content"},
+			"required": []string{"path", "text"},
 		},
 	}
 }
@@ -43,7 +43,7 @@ func (t *Write) Call(args map[string]any) any {
 		metadata.Error = "invalid arguments: missing path string"
 		return enc(metadata)
 	}
-	content := argString(args, "content")
+	content := argString(args, "text")
 
 	if !t.HiddenFiles && hasHiddenComponent(metadata.Path) {
 		metadata.Error = "invalid arguments: hidden path not allowed"
