@@ -5,6 +5,7 @@ Usage: bobo [-hcfvwy] [-m model] [-e effort] [-l logfile]
 Options:
   -h           Show this help message.
   -c           Enable explicit prompt caching.
+  -f           Disable web search and fetch.
   -w           Enable filesystem write.
   -y           YOLO mode: enable write and execution.
   -m model     Select model (ex. openai/gpt-6-luna).
@@ -14,6 +15,7 @@ Options:
 TOOLS
 read(path, offset, limit) grep(regex) find(regex)
 write(path, text) edit(path, oldText, newText) move(newpath, oldpath) copy(new, old) delete(new, old)
+search(query) fetch(url)
 exec(binary, argv)
 
 Models must have image support

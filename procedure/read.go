@@ -121,7 +121,7 @@ func (t *Read) Call(args map[string]any) any {
 		}
 	}
 
-	metadata.MediaType, err = mediaType(file)
+	metadata.MediaType, err = detectMediaType(file)
 	if err != nil {
 		metadata.Error = fmt.Sprintf("detect media type: %s", err)
 		return enc(metadata)

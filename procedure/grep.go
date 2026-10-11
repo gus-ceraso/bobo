@@ -78,7 +78,7 @@ func (t *Grep) Call(args map[string]any) any {
 	if metadata.PathPattern == "" {
 		metadata.PathPattern = ".*"
 	}
-	pre, err := regexp.Compile(metadata.PathPattern)
+	pathRE, err := regexp.Compile(metadata.PathPattern)
 	if err != nil {
 		metadata.Error = fmt.Sprintf("compile regular expression path pattern: %s", err)
 		return enc(metadata)
@@ -119,11 +119,11 @@ func (t *Grep) Call(args map[string]any) any {
 		if !t.HiddenFiles && hasHiddenComponent(p) {
 			return nil
 		}
-		rp, err := filepath.Rel(metadata.Path, p)
+		relPath, err := filepath.Rel(metadata.Path, p)
 		if err != nil {
 			return err
 		}
-		if !pre.MatchString(rp) {
+		if !pathRE.MatchString(relPath) {
 			return nil
 		}
 		file, err := os.Open(p)
@@ -134,19 +134,19 @@ func (t *Grep) Call(args map[string]any) any {
 			return fmt.Errorf("open: %s", err)
 		}
 		defer file.Close()
-		m, err := mediaType(file)
+		mediaType, err := detectMediaType(file)
 		if err != nil {
 			return fmt.Errorf("detect media type: %s", err)
 		}
-		if !strings.Contains(m, "text/") {
+		if !strings.Contains(mediaType, "text/") {
 			return nil
 		}
 		s := bufio.NewScanner(file)
 		var matches []string
 		for j := 1; s.Scan(); j += 1 {
-			l := s.Text()
-			if re.MatchString(l) {
-				matches = append(matches, fmt.Sprintf("%s:%d:%s", rp, j, l))
+			fileLine := s.Text()
+			if re.MatchString(fileLine) {
+				matches = append(matches, fmt.Sprintf("%s:%d:%s", relPath, j, fileLine))
 			}
 		}
 		if err := s.Err(); errors.Is(err, bufio.ErrTooLong) {
@@ -154,9 +154,9 @@ func (t *Grep) Call(args map[string]any) any {
 		} else if err != nil {
 			return fmt.Errorf("scanning text: %s", err)
 		}
-		for _, m := range matches {
+		for _, match := range matches {
 			if i >= metadata.Offset && len(lines) < metadata.Limit {
-				lines = append(lines, m)
+				lines = append(lines, match)
 			}
 			i += 1
 		}

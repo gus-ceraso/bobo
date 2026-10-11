@@ -56,7 +56,7 @@ func hasHiddenComponent(path string) bool {
 	return false
 }
 
-func mediaType(file io.ReadSeeker) (string, error) {
+func detectMediaType(file io.ReadSeeker) (string, error) {
 	if _, err := file.Seek(0, 0); err != nil {
 		return "", fmt.Errorf("lseek: %s", err)
 	}
