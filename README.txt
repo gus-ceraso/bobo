@@ -20,5 +20,7 @@ Models must have image support
 
 Do not autoload AGENTS.md because of instruction hierarchy
 
+Without -y, the model is restricted to the current working directory and can only read/write files outside cwd if they are symlinks.
+
 Prompt:
 You are a helpful assistant. Always answer in utf-8 plain text. You are in $CWD.

@@ -41,7 +41,7 @@ func (_ *Read) Schema() map[string]any {
 	}
 }
 
-func (r *Read) Call(args map[string]any) any {
+func (t *Read) Call(args map[string]any) any {
 	var metadata struct {
 		Error     string `json:"error,omitempty"`
 		Path      string `json:"path,omitempty"`
@@ -59,11 +59,11 @@ func (r *Read) Call(args map[string]any) any {
 	metadata.Offset = argInt(args, "offset")
 	metadata.Limit = argInt(args, "limit")
 
-	if !r.HiddenFiles && hasHiddenComponent(metadata.Path) {
+	if !t.HiddenFiles && hasHiddenComponent(metadata.Path) {
 		metadata.Error = "invalid arguments: hidden path not allowed"
 		return enc(metadata)
 	}
-	if r.LocalFiles && !filepath.IsLocal(metadata.Path) {
+	if t.LocalFiles && !filepath.IsLocal(metadata.Path) {
 		metadata.Error = "invalid arguments: non-local path not allowed"
 		return enc(metadata)
 	}
