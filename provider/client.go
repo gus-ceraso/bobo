@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 )
 
 type Client struct {
 	Token string
+	Log   *log.Logger
 }
 
 func (c *Client) do(method, path string, reqObj, resObj any) error {

@@ -82,13 +82,12 @@ func (c *Client) NewSession(model, effort, systemPrompt string, cache bool, proc
 	s.Cache = cache
 	s.Procedures = make([]Procedure, len(procedures))
 	copy(s.Procedures, procedures)
-	s.Events = make([]Event, 1)
-	s.Events[0] = Event{Type: "system", Content: systemPrompt}
+	c.addEvent(&s, &Event{Type: "system", Content: systemPrompt})
 	return &s, nil
 }
 
 func (c *Client) Send(s *Session, prompt string) (string, error) {
-	s.Events = append(s.Events, Event{Type: "user", Content: prompt})
+	c.addEvent(s, &Event{Type: "user", Content: prompt})
 	var reqObj struct {
 		Model        string `json:"model,omitempty"`
 		Effort       string `json:"reasoning_effort,omitempty"`
@@ -141,7 +140,7 @@ func (c *Client) Send(s *Session, prompt string) (string, error) {
 			return "", fmt.Errorf("finish reason: %s", r)
 		}
 		e := resObj.Choices[0].Event
-		s.Events = append(s.Events, e)
+		c.addEvent(s, &e)
 		if len(e.Calls) == 0 {
 			switch content := e.Content.(type) {
 			case string:
@@ -165,13 +164,13 @@ func (c *Client) Send(s *Session, prompt string) (string, error) {
 					dec := json.NewDecoder(strings.NewReader(call.Procedure.Arguments))
 					dec.UseNumber()
 					if err := dec.Decode(&args); err != nil {
-						s.Events = append(s.Events, Event{
+						c.addEvent(s, &Event{
 							Type:    "tool",
 							Content: "{\"error\": \"invalid arguments: JSON decoding arguments\"}",
 							CallID:  call.ID,
 						})
 					} else {
-						s.Events = append(s.Events, Event{
+						c.addEvent(s, &Event{
 							Type:    "tool",
 							Content: procedure.Call(args),
 							CallID:  call.ID,
@@ -181,7 +180,7 @@ func (c *Client) Send(s *Session, prompt string) (string, error) {
 				}
 			}
 			if !found {
-				s.Events = append(s.Events, Event{
+				c.addEvent(s, &Event{
 					Type:    "tool",
 					Content: "{\"error\": \"procedure not found\"}",
 					CallID:  call.ID,
@@ -190,10 +189,20 @@ func (c *Client) Send(s *Session, prompt string) (string, error) {
 			}
 		}
 		if resObj.Usage.Total >= s.Limit {
-			s.Events = append(s.Events, Event{
+			c.addEvent(s, &Event{
 				Type:    "developer",
 				Content: "Context is nearly full. DO NOT call more tools. Give the user a handoff prompt summarizing the task, progress, and next steps.",
 			})
 		}
+	}
+}
+
+func (c *Client) addEvent(s *Session, e *Event) {
+	s.Events = append(s.Events, *e)
+	if c.Log == nil {
+		return
+	}
+	if j, err := json.Marshal(e); err == nil {
+		c.Log.Println(string(j))
 	}
 }
