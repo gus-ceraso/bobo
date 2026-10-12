@@ -6,37 +6,37 @@ import (
 	"strings"
 )
 
-type Procedure interface {
+type Tool interface {
 	Schema() map[string]any
 	Call(map[string]any) any
 }
 
-type Event struct {
-	Type    string `json:"role"`
-	Content any    `json:"content"`
-	Calls   []struct {
-		ID        string `json:"id"`
-		Type      string `json:"type"`
-		Procedure struct {
+type Message struct {
+	Role      string `json:"role"`
+	Content   any    `json:"content"`
+	ToolCalls []struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+		Tool struct {
 			Name      string `json:"name"`
 			Arguments string `json:"arguments"`
 		} `json:"function"`
 	} `json:"tool_calls,omitempty"`
-	CallID           string `json:"tool_call_id,omitempty"`
+	ToolCallID       string `json:"tool_call_id,omitempty"`
 	Reasoning        string `json:"reasoning,omitempty"`
 	ReasoningDetails any    `json:"reasoning_details,omitempty"`
 }
 
 type Session struct {
-	Model      string
-	Effort     string
-	Cache      bool
-	Limit      int
-	Procedures []Procedure
-	Events     []Event
+	Model    string
+	Effort   string
+	Cache    bool
+	Limit    int
+	Tools    []Tool
+	Messages []Message
 }
 
-func (c *Client) NewSession(model, effort, systemPrompt string, cache bool, procedures []Procedure) (*Session, error) {
+func (c *Client) NewSession(model, effort, systemPrompt string, cache bool, tools []Tool) (*Session, error) {
 	if model == "" {
 		return nil, fmt.Errorf("invalid arguments: empty model")
 	}
@@ -80,14 +80,14 @@ func (c *Client) NewSession(model, effort, systemPrompt string, cache bool, proc
 	s.Effort = effort
 	s.Limit = (3*resObj.Data.ContextLength + 1) / 4
 	s.Cache = cache
-	s.Procedures = make([]Procedure, len(procedures))
-	copy(s.Procedures, procedures)
-	c.addEvent(&s, &Event{Type: "system", Content: systemPrompt})
+	s.Tools = make([]Tool, len(tools))
+	copy(s.Tools, tools)
+	c.addMessage(&s, &Message{Role: "system", Content: systemPrompt})
 	return &s, nil
 }
 
-func (c *Client) Send(s *Session, prompt string) (string, error) {
-	c.addEvent(s, &Event{Type: "user", Content: prompt})
+func (c *Client) Prompt(s *Session, prompt string) (string, error) {
+	c.addMessage(s, &Message{Role: "user", Content: prompt})
 	var reqObj struct {
 		Model        string `json:"model,omitempty"`
 		Effort       string `json:"reasoning_effort,omitempty"`
@@ -95,8 +95,8 @@ func (c *Client) Send(s *Session, prompt string) (string, error) {
 			Type string `json:"type"`
 			TTL  string `json:"ttl"`
 		} `json:"cache_control,omitempty"`
-		Events []Event `json:"messages"`
-		Tools  []struct {
+		Messages []Message `json:"messages"`
+		Tools    []struct {
 			Type   string         `json:"type"`
 			Schema map[string]any `json:"function"`
 		} `json:"tools"`
@@ -113,18 +113,18 @@ func (c *Client) Send(s *Session, prompt string) (string, error) {
 	reqObj.Tools = make([]struct {
 		Type   string         `json:"type"`
 		Schema map[string]any `json:"function"`
-	}, len(s.Procedures))
-	for i := 0; i < len(s.Procedures); i++ {
+	}, len(s.Tools))
+	for i := 0; i < len(s.Tools); i++ {
 		reqObj.Tools[i].Type = "function"
-		reqObj.Tools[i].Schema = s.Procedures[i].Schema()
+		reqObj.Tools[i].Schema = s.Tools[i].Schema()
 	}
 	reqObj.AllowParallelCalls = true
 	for {
-		reqObj.Events = s.Events
+		reqObj.Messages = s.Messages
 		var resObj struct {
 			Choices []struct {
-				FinishReason string `json:"finish_reason"`
-				Event        Event  `json:"message"`
+				FinishReason string  `json:"finish_reason"`
+				Message      Message `json:"message"`
 			} `json:"choices"`
 			Usage struct {
 				Total int `json:"total_tokens"`
@@ -136,13 +136,13 @@ func (c *Client) Send(s *Session, prompt string) (string, error) {
 		if len(resObj.Choices) == 0 {
 			return "", fmt.Errorf("no choices")
 		}
+		m := resObj.Choices[0].Message
+		c.addMessage(s, &m)
 		if r := resObj.Choices[0].FinishReason; r != "" && r != "tool_calls" && r != "stop" {
 			return "", fmt.Errorf("finish reason: %s", r)
 		}
-		e := resObj.Choices[0].Event
-		c.addEvent(s, &e)
-		if len(e.Calls) == 0 {
-			switch content := e.Content.(type) {
+		if len(m.ToolCalls) == 0 {
+			switch content := m.Content.(type) {
 			case string:
 				return content, nil
 			case map[string]any:
@@ -154,51 +154,51 @@ func (c *Client) Send(s *Session, prompt string) (string, error) {
 			}
 			return "", nil
 		}
-		for _, call := range e.Calls {
+		for _, call := range m.ToolCalls {
 			found := false
-			for _, procedure := range s.Procedures {
-				schema := procedure.Schema()
-				if schema["name"].(string) == call.Procedure.Name {
+			for _, tool := range s.Tools {
+				schema := tool.Schema()
+				if schema["name"].(string) == call.Tool.Name {
 					found = true
 					var args map[string]any
-					dec := json.NewDecoder(strings.NewReader(call.Procedure.Arguments))
+					dec := json.NewDecoder(strings.NewReader(call.Tool.Arguments))
 					dec.UseNumber()
 					if err := dec.Decode(&args); err != nil {
-						c.addEvent(s, &Event{
-							Type:    "tool",
-							Content: "{\"error\": \"invalid arguments: JSON decoding arguments\"}",
-							CallID:  call.ID,
+						c.addMessage(s, &Message{
+							Role:       "tool",
+							Content:    "{\"error\": \"invalid arguments: JSON decoding arguments\"}",
+							ToolCallID: call.ID,
 						})
 					} else {
-						c.addEvent(s, &Event{
-							Type:    "tool",
-							Content: procedure.Call(args),
-							CallID:  call.ID,
+						c.addMessage(s, &Message{
+							Role:       "tool",
+							Content:    tool.Call(args),
+							ToolCallID: call.ID,
 						})
 					}
 					break
 				}
 			}
 			if !found {
-				c.addEvent(s, &Event{
-					Type:    "tool",
-					Content: "{\"error\": \"procedure not found\"}",
-					CallID:  call.ID,
+				c.addMessage(s, &Message{
+					Role:       "tool",
+					Content:    "{\"error\": \"tool not found\"}",
+					ToolCallID: call.ID,
 				})
 				continue
 			}
 		}
 		if resObj.Usage.Total >= s.Limit {
-			c.addEvent(s, &Event{
-				Type:    "developer",
+			c.addMessage(s, &Message{
+				Role:    "developer",
 				Content: "Context is nearly full. DO NOT call more tools. Give the user a handoff prompt summarizing the task, progress, and next steps.",
 			})
 		}
 	}
 }
 
-func (c *Client) addEvent(s *Session, e *Event) {
-	s.Events = append(s.Events, *e)
+func (c *Client) addMessage(s *Session, e *Message) {
+	s.Messages = append(s.Messages, *e)
 	if c.Log == nil {
 		return
 	}

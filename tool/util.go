@@ -1,4 +1,4 @@
-package procedure
+package tool
 
 import (
 	"encoding/base64"

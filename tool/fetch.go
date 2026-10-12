@@ -1,4 +1,4 @@
-package procedure
+package tool
 
 import (
 	"bufio"
@@ -8,11 +8,11 @@ import (
 
 	"github.com/gen2brain/go-fitz"
 
-	web "ceraso.dev/bobo/web"
+	"ceraso.dev/bobo/exa"
 )
 
 type Fetch struct {
-	Client *web.Client
+	Client *exa.Client
 }
 
 func (_ *Fetch) Schema() map[string]any {

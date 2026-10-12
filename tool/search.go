@@ -1,13 +1,13 @@
-package procedure
+package tool
 
 import (
 	"fmt"
 
-	web "ceraso.dev/bobo/web"
+	"ceraso.dev/bobo/exa"
 )
 
 type Search struct {
-	Client *web.Client
+	Client *exa.Client
 }
 
 func (_ *Search) Schema() map[string]any {
