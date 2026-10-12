@@ -11,20 +11,20 @@ type Write struct {
 	LocalFiles  bool
 }
 
-func (_ *Write) Schema() map[string]any {
+func (t *Write) Schema() map[string]any {
 	return map[string]any{
 		"name":        "write",
-		"description": "Write text content to a file. If the file already exists, then overwrite it; else create the file and parent directories. Return empty error on success.",
+		"description": "Create a file or replace an existing file's contents with text. Missing parent directories are created. Prefer edit for small changes to existing files.",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"path": map[string]any{
 					"type":        "string",
-					"description": "File path to write.",
+					"description": pathDescription("Path to the file.", t.LocalFiles, t.HiddenFiles),
 				},
 				"text": map[string]any{
 					"type":        "string",
-					"description": "UTF-8 text content to write.",
+					"description": "Complete new contents of the file.",
 				},
 			},
 			"required": []string{"path", "text"},

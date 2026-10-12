@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -14,28 +15,28 @@ type Find struct {
 	LocalFiles  bool
 }
 
-func (_ *Find) Schema() map[string]any {
+func (t *Find) Schema() map[string]any {
 	return map[string]any{
 		"name":        "find",
-		"description": "Search for file paths matching a regular expression pattern recursively. Return one match per line.",
+		"description": "Recursively find files whose paths match a regular expression. Returns one path per line, relative to the search directory, in lexical order. Directories aren't listed, and symlinks are listed but not followed. The result includes the total match count for paging.",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"pattern": map[string]any{
 					"type":        "string",
-					"description": "Regular expression pattern (RE2 syntax) to match file paths against. Use ^ and $ to anchor.",
+					"description": "RE2 regular expression matched against each relative path, such as \"\\.go$\". It matches anywhere in the path unless anchored with ^ or $. Matching is case-sensitive; use (?i) to ignore case.",
 				},
 				"path": map[string]any{
 					"type":        "string",
-					"description": "Directory path to search in. Defaults to \".\".",
+					"description": pathDescription("Directory to search. Defaults to \".\".", t.LocalFiles, t.HiddenFiles),
 				},
 				"offset": map[string]any{
-					"type":        "number",
-					"description": "1-based result path line number to start. Defaults to 1.",
+					"type":        "integer",
+					"description": "1-based match to start from. Defaults to 1.",
 				},
 				"limit": map[string]any{
-					"type":        "number",
-					"description": "Maximum number of path lines to return. Defaults to 1000 lines.",
+					"type":        "integer",
+					"description": "Maximum matches to return. Defaults to 1000.",
 				},
 			},
 			"required": []string{"pattern"},
@@ -82,6 +83,15 @@ func (t *Find) Call(args map[string]any) any {
 	}
 	if t.LocalFiles && !filepath.IsLocal(metadata.Path) {
 		metadata.Error = "invalid arguments: non-local path not allowed"
+		return enc(metadata)
+	}
+	info, err := os.Lstat(metadata.Path)
+	if err != nil {
+		metadata.Error = fmt.Sprintf("stat: %s", err)
+		return enc(metadata)
+	}
+	if !info.IsDir() {
+		metadata.Error = fmt.Sprintf("'%s' is not a directory", metadata.Path)
 		return enc(metadata)
 	}
 

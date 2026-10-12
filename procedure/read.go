@@ -16,24 +16,26 @@ type Read struct {
 	LocalFiles  bool
 }
 
-func (_ *Read) Schema() map[string]any {
+func (t *Read) Schema() map[string]any {
 	return map[string]any{
 		"name":        "read",
-		"description": "Read the contents of a local file or directory. Supports text, PDF, and image.",
+		"description": "Read a local text file, PDF, image (JPEG, PNG, or WebP), or directory. Text files return lines, PDFs return pages as images, and directories return entry names, with a trailing \"/\" on subdirectories. The result includes the total line, page, or entry count for paging. Text files with lines longer than 64 KiB aren't supported.",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"path": map[string]any{
 					"type":        "string",
-					"description": "File path to read.",
+					"description": pathDescription("Path to the file or directory.", t.LocalFiles, t.HiddenFiles),
 				},
 				"offset": map[string]any{
-					"type":        "number",
-					"description": "1-based line number or PDF page to start. Defaults to 1.",
+					"type":        "integer",
+					"minimum":     1,
+					"description": "1-based line, PDF page, or directory entry to start from. Defaults to 1. Ignored for images.",
 				},
 				"limit": map[string]any{
-					"type":        "number",
-					"description": "Maximum number of lines or PDF pages to read. Defaults to 1000 lines or 5 pages.",
+					"type":        "integer",
+					"minimum":     1,
+					"description": "Maximum lines, PDF pages, or directory entries to return. Defaults to 1000 lines or entries, or 5 pages. Ignored for images.",
 				},
 			},
 			"required": []string{"path"},

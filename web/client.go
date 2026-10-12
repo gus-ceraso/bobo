@@ -20,12 +20,14 @@ type Resource struct {
 type Client struct {
 	Token string
 	Cache *expirable.LRU[string, Resource]
+	HTTP  *http.Client
 }
 
 func NewClient(token string) *Client {
 	return &Client{
 		Token: token,
 		Cache: expirable.NewLRU[string, Resource](100, nil, 30*time.Minute),
+		HTTP:  &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
@@ -46,7 +48,7 @@ func (c *Client) do(method, path string, reqObj, resObj any) error {
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return fmt.Errorf("doing http request: %s", err)
 	}

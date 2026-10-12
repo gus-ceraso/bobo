@@ -14,20 +14,20 @@ type Copy struct {
 	LocalFiles  bool
 }
 
-func (_ *Copy) Schema() map[string]any {
+func (t *Copy) Schema() map[string]any {
 	return map[string]any{
 		"name":        "copy",
-		"description": "Copy a file or directory recursively. If old_path is a directory, its contents are merged into new_path. new_path is never treated as a parent directory. Return empty error on success.",
+		"description": "Copy a file, directory, or symlink. Missing parent directories of new_path are created. Directories are copied recursively and merged into an existing new_path. Existing files are overwritten. Symlinks are copied as links, not followed, and file permissions are preserved. new_path is the copy itself, not a directory to copy into, and it can't be old_path or inside it. Copying stops at the first error, which can leave a partial copy.",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"old_path": map[string]any{
 					"type":        "string",
-					"description": "Old path.",
+					"description": pathDescription("Path to copy.", t.LocalFiles, t.HiddenFiles),
 				},
 				"new_path": map[string]any{
 					"type":        "string",
-					"description": "New path.",
+					"description": pathDescription("Path of the copy.", t.LocalFiles, t.HiddenFiles),
 				},
 			},
 			"required": []string{"old_path", "new_path"},
@@ -75,7 +75,7 @@ func (t *Copy) Call(args map[string]any) any {
 		return enc(metadata)
 	}
 	if inside {
-		metadata.Error = "invalid arguments: new_path <= old_path"
+		metadata.Error = "invalid arguments: new_path can't be old_path or inside it"
 		return enc(metadata)
 	}
 
@@ -91,6 +91,11 @@ func (t *Copy) Call(args map[string]any) any {
 			return err
 		}
 		new := filepath.Join(metadata.NewPath, rel)
+		if rel == "." {
+			if err := os.MkdirAll(filepath.Dir(new), 0o777); err != nil {
+				return err
+			}
+		}
 		info, err := d.Info()
 		if err != nil {
 			return err

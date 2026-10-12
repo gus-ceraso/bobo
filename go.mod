@@ -5,6 +5,7 @@ go 1.27.1
 require (
 	github.com/gen2brain/go-fitz v1.28.2
 	github.com/hashicorp/golang-lru/v2 v2.0.7
+	golang.org/x/term v0.47.0
 )
 
 require (

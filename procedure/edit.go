@@ -14,24 +14,24 @@ type Edit struct {
 	LocalFiles  bool
 }
 
-func (_ *Edit) Schema() map[string]any {
+func (t *Edit) Schema() map[string]any {
 	return map[string]any{
 		"name":        "edit",
-		"description": "Edit an existing UTF-8 text file by unambiguous literal replacement. Returns empty error on success.",
+		"description": "Replace exactly one occurrence of old_text with new_text in an existing text file. Matching is literal and case-sensitive, including whitespace and line breaks. The edit fails if old_text isn't found or occurs more than once. Include surrounding lines to make it unique.",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"path": map[string]any{
 					"type":        "string",
-					"description": "File path to edit.",
+					"description": pathDescription("Path to the file.", t.LocalFiles, t.HiddenFiles),
 				},
 				"old_text": map[string]any{
 					"type":        "string",
-					"description": "Non-empty UTF-8 text literal to replace. Must occur only once in the file.",
+					"description": "Exact text to replace. Must occur exactly once in the file.",
 				},
 				"new_text": map[string]any{
 					"type":        "string",
-					"description": "Replacement text.",
+					"description": "Replacement text. Use an empty string to delete old_text.",
 				},
 			},
 			"required": []string{"path", "old_text", "new_text"},
@@ -96,6 +96,10 @@ func (t *Edit) Call(args map[string]any) any {
 		metadata.Error = fmt.Sprintf("read: %s", err)
 		return enc(metadata)
 	}
+	if bytes.Contains(content, []byte("\r\n")) {
+		old = crlf(old)
+		new = crlf(new)
+	}
 	i := bytes.Index(content, old)
 	if i == -1 {
 		metadata.Error = fmt.Sprintf("'%s' does not contain old_text", metadata.Path)
@@ -115,4 +119,9 @@ func (t *Edit) Call(args map[string]any) any {
 		return enc(metadata)
 	}
 	return enc(metadata)
+}
+
+func crlf(b []byte) []byte {
+	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
+	return bytes.ReplaceAll(b, []byte("\n"), []byte("\r\n"))
 }

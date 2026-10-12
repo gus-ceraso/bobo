@@ -9,10 +9,10 @@ import (
 
 func (c *Client) Fetch(url string) (Resource, error) {
 	r, ok := c.Cache.Get(url)
-	if !ok {
+	if ok {
 		return r, nil
 	}
-	resp, err := http.Get(url)
+	resp, err := c.HTTP.Get(url)
 	if err != nil {
 		return r, fmt.Errorf("GET %s: %s", url, err)
 	}

@@ -103,3 +103,14 @@ func containsAny(s string, substrs ...string) bool {
 func encImage(mediaType string, content []byte) string {
 	return "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(content)
 }
+
+// pathDescription appends the configured path restrictions to desc.
+func pathDescription(desc string, localFiles, hiddenFiles bool) string {
+	if localFiles {
+		desc += " Must be a relative path inside the working directory."
+	}
+	if !hiddenFiles {
+		desc += " Hidden files and directories (names starting with \".\") aren't allowed."
+	}
+	return desc
+}

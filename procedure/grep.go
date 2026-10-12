@@ -16,32 +16,32 @@ type Grep struct {
 	LocalFiles  bool
 }
 
-func (_ *Grep) Schema() map[string]any {
+func (t *Grep) Schema() map[string]any {
 	return map[string]any{
 		"name":        "grep",
-		"description": "Search for file text lines matching a regular expression pattern recursively. Return filename:linenumber:line for each match.",
+		"description": "Recursively search text files for lines matching a regular expression. Returns one match per line as path:line_number:line, with paths relative to the search directory, in lexical order. Symlinks, files that aren't text, and files with lines longer than 64 KiB are skipped. The result includes the total match count for paging.",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"pattern": map[string]any{
 					"type":        "string",
-					"description": "Regular expression pattern (RE2 syntax) to match file text lines against. Use ^ and $ to anchor.",
+					"description": "RE2 regular expression matched against each line. It matches anywhere in the line unless anchored with ^ or $. Matching is case-sensitive; use (?i) to ignore case.",
 				},
 				"path": map[string]any{
 					"type":        "string",
-					"description": "Directory path to search in. Defaults to \".\".",
+					"description": pathDescription("Directory to search. Defaults to \".\".", t.LocalFiles, t.HiddenFiles),
 				},
 				"path_pattern": map[string]any{
 					"type":        "string",
-					"description": "Regular expression pattern (RE2 syntax) to match file paths against. Use ^ and $ to anchor. Defaults to \".*\".",
+					"description": "RE2 regular expression that limits the search to files whose relative paths match, such as \"\\.go$\". Matches anywhere in the path unless anchored. Defaults to all files.",
 				},
 				"offset": map[string]any{
-					"type":        "number",
-					"description": "1-based result match line number to start. Defaults to 1.",
+					"type":        "integer",
+					"description": "1-based match to start from. Defaults to 1.",
 				},
 				"limit": map[string]any{
-					"type":        "number",
-					"description": "Maximum number of matches to return. Defaults to 1000 lines.",
+					"type":        "integer",
+					"description": "Maximum matches to return. Defaults to 1000.",
 				},
 			},
 			"required": []string{"pattern"},
@@ -100,6 +100,15 @@ func (t *Grep) Call(args map[string]any) any {
 		metadata.Error = "invalid arguments: non-local path not allowed"
 		return enc(metadata)
 	}
+	info, err := os.Lstat(metadata.Path)
+	if err != nil {
+		metadata.Error = fmt.Sprintf("stat: %s", err)
+		return enc(metadata)
+	}
+	if !info.IsDir() {
+		metadata.Error = fmt.Sprintf("'%s' is not a directory", metadata.Path)
+		return enc(metadata)
+	}
 
 	var lines []string
 	i := 1
@@ -117,6 +126,9 @@ func (t *Grep) Call(args map[string]any) any {
 			return nil
 		}
 		if !t.HiddenFiles && hasHiddenComponent(p) {
+			return nil
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		relPath, err := filepath.Rel(metadata.Path, p)

@@ -16,28 +16,28 @@ type Exec struct{}
 func (_ *Exec) Schema() map[string]any {
 	return map[string]any{
 		"name":        "exec",
-		"description": "Execute a program. Return tail of stdout combied with stderr.",
+		"description": "Run a program in the working directory and return the last lines of its combined stdout and stderr, along with its exit code. The program runs directly, without a shell, so pipes, redirects, globs, and variables aren't expanded. To use them, run \"sh\" with the arguments \"-c\" and the command. Stdin is empty. Output that isn't text or has lines longer than 64 KiB isn't supported.",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"path": map[string]any{
 					"type":        "string",
-					"description": "Path of binary to execute.",
+					"description": "Program to run. A name without a \"/\" is looked up in PATH.",
 				},
 				"arguments": map[string]any{
 					"type": "array",
 					"items": map[string]any{
 						"type": "string",
 					},
-					"description": "List of arguments to be given to the binary.",
+					"description": "Arguments passed to the program as is, one per element, without shell quoting.",
 				},
 				"timeout": map[string]any{
-					"type":        "number",
-					"description": "Maximum number of seconds to wait for process termintation, after that the process is killed. Defaults to 300.",
+					"type":        "integer",
+					"description": "Seconds to wait before the program is killed. Defaults to 300.",
 				},
 				"limit": map[string]any{
-					"type":        "number",
-					"description": "Maximum number of tail lines to return. Defaults to 1000.",
+					"type":        "integer",
+					"description": "Maximum number of output lines to return, counted from the end. Defaults to 1000.",
 				},
 			},
 			"required": []string{"path"},
@@ -79,6 +79,7 @@ func (_ *Exec) Call(args map[string]any) any {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(metadata.Timeout)*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, metadata.Path, metadata.Arguments...)
+	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		metadata.Error = err.Error()

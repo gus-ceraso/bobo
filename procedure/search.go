@@ -13,13 +13,13 @@ type Search struct {
 func (_ *Search) Schema() map[string]any {
 	return map[string]any{
 		"name":        "search",
-		"description": "Search the web using a natural text query via Exa.",
+		"description": "Search the web with Exa. Returns up to 10 results as a JSON array of objects with title, url, and highlights, which are excerpts relevant to the query. Use fetch to read a full page.",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"query": map[string]any{
 					"type":        "string",
-					"description": "Natural text query. E.g. \"Who won the 2026 World Cup?\"",
+					"description": "Natural-language description of what to find, such as \"Go 1.24 release notes\". Include specific names, versions, or dates when relevant.",
 				},
 			},
 			"required": []string{"query"},

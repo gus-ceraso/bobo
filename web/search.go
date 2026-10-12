@@ -3,9 +3,9 @@ package exa
 import "fmt"
 
 type SearchResult struct {
-	Title      string `json:"title"`
-	URL        string `json:"url"`
-	Highlights string `json:"highlights"`
+	Title      string   `json:"title"`
+	URL        string   `json:"url"`
+	Highlights []string `json:"highlights"`
 }
 
 func (c *Client) Search(query string) ([]SearchResult, error) {

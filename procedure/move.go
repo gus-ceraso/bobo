@@ -11,20 +11,20 @@ type Move struct {
 	LocalFiles  bool
 }
 
-func (_ *Move) Schema() map[string]any {
+func (t *Move) Schema() map[string]any {
 	return map[string]any{
 		"name":        "move",
-		"description": "Move a file or directory. Return empty error on success.",
+		"description": "Move or rename a file, directory, or symlink. new_path is the new name, not a directory to move into. Missing parent directories of new_path are created. An existing file at new_path is overwritten.",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"old_path": map[string]any{
 					"type":        "string",
-					"description": "Old path.",
+					"description": pathDescription("Path to move.", t.LocalFiles, t.HiddenFiles),
 				},
 				"new_path": map[string]any{
 					"type":        "string",
-					"description": "New path.",
+					"description": pathDescription("New path.", t.LocalFiles, t.HiddenFiles),
 				},
 			},
 			"required": []string{"old_path", "new_path"},
@@ -67,6 +67,14 @@ func (t *Move) Call(args map[string]any) any {
 		return enc(metadata)
 	}
 
+	if _, err := os.Lstat(metadata.OldPath); err != nil {
+		metadata.Error = fmt.Sprintf("stat: %s", err)
+		return enc(metadata)
+	}
+	if err := os.MkdirAll(filepath.Dir(metadata.NewPath), 0o777); err != nil {
+		metadata.Error = fmt.Sprintf("mkdir: %s", err)
+		return enc(metadata)
+	}
 	if err := os.Rename(metadata.OldPath, metadata.NewPath); err != nil {
 		metadata.Error = fmt.Sprintf("rename: %s", err)
 		return enc(metadata)

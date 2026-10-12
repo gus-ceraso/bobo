@@ -18,21 +18,21 @@ type Fetch struct {
 func (_ *Fetch) Schema() map[string]any {
 	return map[string]any{
 		"name":        "fetch",
-		"description": "Read the contents of a remote file via HTTP(S). Supports text, HTML, PDF, and image.",
+		"description": "Fetch a URL with HTTP GET. HTML pages return their extracted text, other text and JSON return lines, PDFs return pages as images, and JPEG, PNG, and WebP images are returned as is. The result includes the total line or page count for paging. Responses are cached for 30 minutes. Text with lines longer than 64 KiB isn't supported.",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"url": map[string]any{
 					"type":        "string",
-					"description": "HTTP(S) url to fetch.",
+					"description": "HTTP or HTTPS URL to fetch.",
 				},
 				"offset": map[string]any{
-					"type":        "number",
-					"description": "1-based line number or PDF page to start. Defaults to 1.",
+					"type":        "integer",
+					"description": "1-based line or PDF page to start from. Defaults to 1. Ignored for images.",
 				},
 				"limit": map[string]any{
-					"type":        "number",
-					"description": "Maximum number of lines or PDF pages to read. Defaults to 1000 lines or 5 pages.",
+					"type":        "integer",
+					"description": "Maximum lines or PDF pages to return. Defaults to 1000 lines or 5 pages. Ignored for images.",
 				},
 			},
 			"required": []string{"url"},
