@@ -73,6 +73,9 @@ func REPL(eval func(string) (string, error)) error {
 				break
 			}
 		}
+		if input == "" {
+			continue
+		}
 		output, err := eval(input)
 		if err != nil {
 			output = fmt.Sprintf("%s\neval: %s", output, err)

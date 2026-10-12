@@ -3,8 +3,12 @@ package openrouter
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 )
+
+var affordRe = regexp.MustCompile(`402 Payment Required:.*can only afford (\d+)`)
 
 type Tool interface {
 	Schema() map[string]any
@@ -28,12 +32,13 @@ type Message struct {
 }
 
 type Session struct {
-	Model    string
-	Effort   string
-	Cache    bool
-	Limit    int
-	Tools    []Tool
-	Messages []Message
+	Model               string
+	Effort              string
+	Cache               bool
+	Limit               int
+	MaxCompletionTokens int
+	Tools               []Tool
+	Messages            []Message
 }
 
 func (c *Client) NewSession(model, effort, systemPrompt string, cache bool, tools []Tool) (*Session, error) {
@@ -45,8 +50,11 @@ func (c *Client) NewSession(model, effort, systemPrompt string, cache bool, tool
 			Architecture struct {
 				InputModalities []string `json:"input_modalities"`
 			} `json:"architecture"`
-			ContextLength int `json:"context_length"`
-			Reasoning     struct {
+			TopProvider struct {
+				ContextLength       int `json:"context_length"`
+				MaxCompletionTokens int `json:"max_completion_tokens"`
+			} `json:"top_provider"`
+			Reasoning struct {
 				SupportedEfforts []string `json:"supported_efforts"`
 			} `json:"reasoning"`
 		} `json:"data"`
@@ -78,7 +86,8 @@ func (c *Client) NewSession(model, effort, systemPrompt string, cache bool, tool
 	var s Session
 	s.Model = model
 	s.Effort = effort
-	s.Limit = (3*resObj.Data.ContextLength + 1) / 4
+	s.Limit = (3*resObj.Data.TopProvider.ContextLength + 1) / 4
+	s.MaxCompletionTokens = resObj.Data.TopProvider.MaxCompletionTokens
 	s.Cache = cache
 	s.Tools = make([]Tool, len(tools))
 	copy(s.Tools, tools)
@@ -95,8 +104,9 @@ func (c *Client) Prompt(s *Session, prompt string) (string, error) {
 			Type string `json:"type"`
 			TTL  string `json:"ttl"`
 		} `json:"cache_control,omitempty"`
-		Messages []Message `json:"messages"`
-		Tools    []struct {
+		MaxCompletionTokens int       `json:"max_completion_tokens"`
+		Messages            []Message `json:"messages"`
+		Tools               []struct {
 			Type   string         `json:"type"`
 			Schema map[string]any `json:"function"`
 		} `json:"tools"`
@@ -110,6 +120,7 @@ func (c *Client) Prompt(s *Session, prompt string) (string, error) {
 			TTL  string `json:"ttl"`
 		}{"ephemeral", "5m"}
 	}
+	reqObj.MaxCompletionTokens = s.MaxCompletionTokens
 	reqObj.Tools = make([]struct {
 		Type   string         `json:"type"`
 		Schema map[string]any `json:"function"`
@@ -123,14 +134,21 @@ func (c *Client) Prompt(s *Session, prompt string) (string, error) {
 		reqObj.Messages = s.Messages
 		var resObj struct {
 			Choices []struct {
-				FinishReason string  `json:"finish_reason"`
-				Message      Message `json:"message"`
+				Message Message `json:"message"`
 			} `json:"choices"`
 			Usage struct {
 				Total int `json:"total_tokens"`
 			} `json:"usage"`
 		}
+	POST:
 		if err := c.do("POST", "/chat/completions", &reqObj, &resObj); err != nil {
+			if m := affordRe.FindStringSubmatch(err.Error()); m != nil {
+				if n, convErr := strconv.Atoi(m[1]); convErr == nil {
+					s.MaxCompletionTokens = n
+					reqObj.MaxCompletionTokens = n
+					goto POST
+				}
+			}
 			return "", fmt.Errorf("sending prompt: %s", err)
 		}
 		if len(resObj.Choices) == 0 {
@@ -138,9 +156,6 @@ func (c *Client) Prompt(s *Session, prompt string) (string, error) {
 		}
 		m := resObj.Choices[0].Message
 		c.addMessage(s, &m)
-		if r := resObj.Choices[0].FinishReason; r != "" && r != "tool_calls" && r != "stop" {
-			return "", fmt.Errorf("finish reason: %s", r)
-		}
 		if len(m.ToolCalls) == 0 {
 			switch content := m.Content.(type) {
 			case string:
