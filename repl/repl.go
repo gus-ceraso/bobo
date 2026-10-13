@@ -23,12 +23,15 @@ func REPL(eval func(string) (string, error)) error {
 	if err != nil {
 		return fmt.Errorf("enable raw mode: %s", err)
 	}
-	defer term.Restore(fd, oldState)
+	defer func() { term.Restore(fd, oldState); fmt.Println() }()
 
 	t := term.NewTerminal(struct {
 		io.Reader
 		io.Writer
 	}{os.Stdin, os.Stdout}, "> ")
+
+	t.SetBracketedPasteMode(true)
+	defer t.SetBracketedPasteMode(false)
 
 	lastW, lastH, err := term.GetSize(fd)
 	if err == nil {
@@ -63,8 +66,14 @@ func REPL(eval func(string) (string, error)) error {
 			line, err := t.ReadLine()
 			if errors.Is(err, io.EOF) {
 				return nil
-			} else if err != nil {
+			}
+			pasted := errors.Is(err, term.ErrPasteIndicator)
+			if err != nil && !pasted {
 				return fmt.Errorf("read: %s", err)
+			}
+			if pasted {
+				input += line + "\n"
+				continue
 			}
 			if strings.HasSuffix(line, "\\") {
 				input += line[:len(line)-1] + "\n"
@@ -73,6 +82,7 @@ func REPL(eval func(string) (string, error)) error {
 				break
 			}
 		}
+		input = strings.TrimRight(input, "\n")
 		if input == "" {
 			continue
 		}

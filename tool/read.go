@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/gen2brain/go-fitz"
@@ -53,13 +54,23 @@ func (t *Read) Call(args map[string]any) any {
 		Total     int    `json:"total,omitempty"`
 	}
 
-	metadata.Path = argString(args, "path")
+	metadata.Path, _ = argString(args, "path")
 	if metadata.Path == "" {
 		metadata.Error = "invalid arguments: missing path string"
 		return enc(metadata)
 	}
-	metadata.Offset = argInt(args, "offset")
-	metadata.Limit = argInt(args, "limit")
+	offset, err := argOptionalPositive(args, "offset")
+	if err != nil {
+		metadata.Error = err.Error()
+		return enc(metadata)
+	}
+	metadata.Offset = offset
+	limit, err := argOptionalPositive(args, "limit")
+	if err != nil {
+		metadata.Error = err.Error()
+		return enc(metadata)
+	}
+	metadata.Limit = limit
 
 	if !t.HiddenFiles && hasHiddenComponent(metadata.Path) {
 		metadata.Error = "invalid arguments: hidden path not allowed"
@@ -95,9 +106,16 @@ func (t *Read) Call(args map[string]any) any {
 			metadata.Error = fmt.Sprintf("readdir: %s", err)
 			return enc(metadata)
 		}
-		metadata.Total = len(entries)
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+		var visible []os.DirEntry
+		for _, entry := range entries {
+			if t.HiddenFiles || !hasHiddenComponent(entry.Name()) {
+				visible = append(visible, entry)
+			}
+		}
+		metadata.Total = len(visible)
 		var lines []string
-		for i, entry := range entries {
+		for i, entry := range visible {
 			if i+1 < metadata.Offset {
 				continue
 			}

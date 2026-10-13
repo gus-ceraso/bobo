@@ -60,7 +60,7 @@ func main() {
 		tools = append(tools, &tool.Search{Client: exaClient})
 		tools = append(tools, &tool.Fetch{Client: exaClient})
 	}
-	if enableWrite {
+	if enableWrite || enableYOLO {
 		tools = append(tools, &tool.Write{HiddenFiles: hiddenFiles, LocalFiles: localFiles})
 		tools = append(tools, &tool.Edit{HiddenFiles: hiddenFiles, LocalFiles: localFiles})
 		tools = append(tools, &tool.Copy{HiddenFiles: hiddenFiles, LocalFiles: localFiles})

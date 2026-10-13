@@ -34,7 +34,7 @@ func (t *Search) Call(args map[string]any) any {
 		Total int    `json:"total,omitempty"`
 	}
 
-	metadata.Query = argString(args, "query")
+	metadata.Query, _ = argString(args, "query")
 	if metadata.Query == "" {
 		metadata.Error = "invalid arguments: missing query string"
 		return enc(metadata)

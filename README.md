@@ -1,6 +1,6 @@
 # bobo
 
-A simple and portable harness for language models
+A simple and portable agent harness for language models
 
 ## Introduction
 
@@ -13,7 +13,11 @@ runtime](https://go.dev/wiki/MinimumRequirements). If it doesn't run properly on
 your system, [let me know](mailto:gus@ceraso.dev).
 
 ```
-$ git clone https://ceraso.dev/bobo.git && cd bobo && make && sudo make install
+$ git clone https://ceraso.dev/bobo.git 
+$ cd bobo
+$ make check
+$ make
+$ sudo make install
 ```
 
 ## Usage
@@ -54,6 +58,7 @@ Options:
 ### Choice of language model
 
 ## Tools
+
 
 ### Read
 

@@ -45,17 +45,23 @@ func (t *Edit) Call(args map[string]any) any {
 		Path  string `json:"path,omitempty"`
 	}
 
-	metadata.Path = argString(args, "path")
+	metadata.Path, _ = argString(args, "path")
 	if metadata.Path == "" {
 		metadata.Error = "invalid arguments: missing path string"
 		return enc(metadata)
 	}
-	old := []byte(argString(args, "old_text"))
+	oldText, _ := argString(args, "old_text")
+	old := []byte(oldText)
 	if len(old) == 0 {
 		metadata.Error = "invalid arguments: missing old_text string"
 		return enc(metadata)
 	}
-	new := []byte(argString(args, "new_text"))
+	newText, ok := argString(args, "new_text")
+	if !ok {
+		metadata.Error = "invalid arguments: missing new_text string"
+		return enc(metadata)
+	}
+	new := []byte(newText)
 
 	if !t.HiddenFiles && hasHiddenComponent(metadata.Path) {
 		metadata.Error = "invalid arguments: hidden path not allowed"

@@ -60,7 +60,7 @@ func (t *Grep) Call(args map[string]any) any {
 		Total       int    `json:"total,omitempty"`
 	}
 
-	metadata.Pattern = argString(args, "pattern")
+	metadata.Pattern, _ = argString(args, "pattern")
 	if metadata.Pattern == "" {
 		metadata.Error = "invalid arguments: missing regular expression pattern string"
 		return enc(metadata)
@@ -70,11 +70,11 @@ func (t *Grep) Call(args map[string]any) any {
 		metadata.Error = fmt.Sprintf("compile regular expression pattern: %s", err)
 		return enc(metadata)
 	}
-	metadata.Path = argString(args, "path")
+	metadata.Path, _ = argString(args, "path")
 	if metadata.Path == "" {
 		metadata.Path = "."
 	}
-	metadata.PathPattern = argString(args, "path_pattern")
+	metadata.PathPattern, _ = argString(args, "path_pattern")
 	if metadata.PathPattern == "" {
 		metadata.PathPattern = ".*"
 	}
@@ -83,11 +83,21 @@ func (t *Grep) Call(args map[string]any) any {
 		metadata.Error = fmt.Sprintf("compile regular expression path pattern: %s", err)
 		return enc(metadata)
 	}
-	metadata.Offset = argInt(args, "offset")
+	offset, err := argOptionalPositive(args, "offset")
+	if err != nil {
+		metadata.Error = err.Error()
+		return enc(metadata)
+	}
+	metadata.Offset = offset
 	if metadata.Offset == 0 {
 		metadata.Offset = 1
 	}
-	metadata.Limit = argInt(args, "limit")
+	limit, err := argOptionalPositive(args, "limit")
+	if err != nil {
+		metadata.Error = err.Error()
+		return enc(metadata)
+	}
+	metadata.Limit = limit
 	if metadata.Limit == 0 {
 		metadata.Limit = 1000
 	}
@@ -128,7 +138,7 @@ func (t *Grep) Call(args map[string]any) any {
 		if !t.HiddenFiles && hasHiddenComponent(p) {
 			return nil
 		}
-		if d.Type()&fs.ModeSymlink != 0 {
+		if !d.Type().IsRegular() {
 			return nil
 		}
 		relPath, err := filepath.Rel(metadata.Path, p)

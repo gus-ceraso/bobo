@@ -18,16 +18,18 @@ type Resource struct {
 }
 
 type Client struct {
-	Token string
-	Cache *expirable.LRU[string, Resource]
-	HTTP  *http.Client
+	Token   string
+	BaseURL string
+	Cache   *expirable.LRU[string, Resource]
+	HTTP    *http.Client
 }
 
 func NewClient(token string) *Client {
 	return &Client{
-		Token: token,
-		Cache: expirable.NewLRU[string, Resource](100, nil, 30*time.Minute),
-		HTTP:  &http.Client{Timeout: 120 * time.Second},
+		Token:   token,
+		BaseURL: "https://api.exa.ai",
+		Cache:   expirable.NewLRU[string, Resource](100, nil, 30*time.Minute),
+		HTTP:    &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
@@ -40,7 +42,7 @@ func (c *Client) do(method, path string, reqObj, resObj any) error {
 		}
 		reqBody = &buf
 	}
-	req, err := http.NewRequest(method, "https://api.exa.ai"+path, reqBody)
+	req, err := http.NewRequest(method, c.BaseURL+path, reqBody)
 	if err != nil {
 		return fmt.Errorf("constructing http request: %s", err)
 	}

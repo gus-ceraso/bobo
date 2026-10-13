@@ -50,13 +50,23 @@ func (t *Fetch) Call(args map[string]any) any {
 		Total     int    `json:"total,omitempty"`
 	}
 
-	metadata.URL = argString(args, "url")
+	metadata.URL, _ = argString(args, "url")
 	if metadata.URL == "" {
 		metadata.Error = "invalid arguments: missing url string"
 		return enc(metadata)
 	}
-	metadata.Offset = argInt(args, "offset")
-	metadata.Limit = argInt(args, "limit")
+	offset, err := argOptionalPositive(args, "offset")
+	if err != nil {
+		metadata.Error = err.Error()
+		return enc(metadata)
+	}
+	metadata.Offset = offset
+	limit, err := argOptionalPositive(args, "limit")
+	if err != nil {
+		metadata.Error = err.Error()
+		return enc(metadata)
+	}
+	metadata.Limit = limit
 
 	resource, err := t.Client.Fetch(metadata.URL)
 	if err != nil {

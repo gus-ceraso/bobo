@@ -55,24 +55,45 @@ func (_ *Exec) Call(args map[string]any) any {
 		ExitCode  *int     `json:"exit_code,omitempty"`
 	}
 
-	metadata.Path = argString(args, "path")
+	metadata.Path, _ = argString(args, "path")
 	if len(metadata.Path) == 0 {
 		metadata.Error = "invalid arguments: missing path string"
 		return enc(metadata)
 	}
-	metadata.Arguments = argList[string](args, "arguments")
-	metadata.Timeout = argInt(args, "timeout")
+	var arguments []string
+	if argumentsAny, ok := args["arguments"]; ok {
+		list, ok := argumentsAny.([]any)
+		if !ok {
+			metadata.Error = "invalid arguments: arguments must be a list of strings"
+			return enc(metadata)
+		}
+		for _, item := range list {
+			argument, ok := item.(string)
+			if !ok {
+				metadata.Error = "invalid arguments: arguments must be a list of strings"
+				return enc(metadata)
+			}
+			arguments = append(arguments, argument)
+		}
+	}
+	metadata.Arguments = arguments
+	metadata.Timeout, _ = argInt(args, "timeout")
 	if metadata.Timeout < 0 {
 		metadata.Error = "invalid arguments: timeout must be >= 0 (default)"
 		return enc(metadata)
 	} else if metadata.Timeout == 0 {
 		metadata.Timeout = 300
-	}
-	metadata.Limit = argInt(args, "limit")
-	if metadata.Limit < 0 {
-		metadata.Error = "invalid arguments: limit must be >= 0 (default)"
+	} else if metadata.Timeout > 7200 {
+		metadata.Error = fmt.Sprintf("invalid arguments: timeout must be <= 7200")
 		return enc(metadata)
-	} else if metadata.Limit == 0 {
+	}
+	limit, err := argOptionalPositive(args, "limit")
+	if err != nil {
+		metadata.Error = err.Error()
+		return enc(metadata)
+	}
+	metadata.Limit = limit
+	if metadata.Limit == 0 {
 		metadata.Limit = 1000
 	}
 

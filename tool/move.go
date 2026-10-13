@@ -39,12 +39,12 @@ func (t *Move) Call(args map[string]any) any {
 		NewPath string `json:"new_path,omitempty"`
 	}
 
-	metadata.OldPath = argString(args, "old_path")
+	metadata.OldPath, _ = argString(args, "old_path")
 	if len(metadata.OldPath) == 0 {
 		metadata.Error = "invalid arguments: missing old_path string"
 		return enc(metadata)
 	}
-	metadata.NewPath = argString(args, "new_path")
+	metadata.NewPath, _ = argString(args, "new_path")
 	if len(metadata.NewPath) == 0 {
 		metadata.Error = "invalid arguments: missing new_path string"
 		return enc(metadata)

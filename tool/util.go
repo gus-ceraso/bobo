@@ -11,52 +11,32 @@ import (
 	"strings"
 )
 
-func argString(m map[string]any, k string) string {
+func argString(m map[string]any, k string) (string, bool) {
 	v, ok := m[k]
 	if !ok {
-		return ""
+		return "", false
 	}
 	s, ok := v.(string)
 	if !ok {
-		return ""
+		return "", false
 	}
-	return s
+	return s, true
 }
 
-func argList[T any](m map[string]any, k string) []T {
+func argInt(m map[string]any, k string) (int, bool) {
 	v, ok := m[k]
 	if !ok {
-		return nil
-	}
-	a, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	var l []T
-	for i := 0; i < len(a); i++ {
-		t, ok := a[i].(T)
-		if !ok {
-			return nil
-		}
-		l = append(l, t)
-	}
-	return l
-}
-
-func argInt(m map[string]any, k string) int {
-	v, ok := m[k]
-	if !ok {
-		return 0
+		return 0, false
 	}
 	n, ok := v.(json.Number)
 	if !ok {
-		return 0
+		return 0, false
 	}
 	i, err := n.Int64()
 	if err != nil {
-		return 0
+		return 0, false
 	}
-	return int(i)
+	return int(i), true
 }
 
 func enc(obj any) string {
@@ -113,4 +93,15 @@ func pathDescription(desc string, localFiles, hiddenFiles bool) string {
 		desc += " Hidden files and directories (names starting with \".\") aren't allowed."
 	}
 	return desc
+}
+
+func argOptionalPositive(m map[string]any, k string) (int, error) {
+	if _, ok := m[k]; !ok {
+		return 0, nil
+	}
+	n, ok := argInt(m, k)
+	if !ok || n < 1 {
+		return 0, fmt.Errorf("invalid arguments: %s must be an integer >= 1", k)
+	}
+	return n, nil
 }

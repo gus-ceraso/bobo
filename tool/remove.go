@@ -33,7 +33,7 @@ func (t *Remove) Call(args map[string]any) any {
 		Path  string `json:"path,omitempty"`
 	}
 
-	metadata.Path = argString(args, "path")
+	metadata.Path, _ = argString(args, "path")
 	if len(metadata.Path) == 0 {
 		metadata.Error = "invalid arguments: missing path string"
 		return enc(metadata)

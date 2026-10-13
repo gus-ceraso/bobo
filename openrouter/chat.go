@@ -10,6 +10,8 @@ import (
 
 var affordRe = regexp.MustCompile(`402 Payment Required:.*can only afford (\d+)`)
 
+const maxAffordRetries = 3
+
 type Tool interface {
 	Schema() map[string]any
 	Call(map[string]any) any
@@ -140,10 +142,12 @@ func (c *Client) Prompt(s *Session, prompt string) (string, error) {
 				Total int `json:"total_tokens"`
 			} `json:"usage"`
 		}
+		retries := 0
 	POST:
 		if err := c.do("POST", "/chat/completions", &reqObj, &resObj); err != nil {
-			if m := affordRe.FindStringSubmatch(err.Error()); m != nil {
-				if n, convErr := strconv.Atoi(m[1]); convErr == nil {
+			if m := affordRe.FindStringSubmatch(err.Error()); m != nil && retries < maxAffordRetries {
+				if n, convErr := strconv.Atoi(m[1]); convErr == nil && n >= 1 && n < reqObj.MaxCompletionTokens {
+					retries++
 					s.MaxCompletionTokens = n
 					reqObj.MaxCompletionTokens = n
 					goto POST
