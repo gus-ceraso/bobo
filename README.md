@@ -4,6 +4,8 @@ A simple and portable agent harness for language models
 
 ## Introduction
 
+[agent = model + harness](https://martinfowler.com/articles/harness-engineering.html). bobo is a simple harness.
+
 ### The agent loop
 
 ## Installation

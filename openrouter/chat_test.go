@@ -424,8 +424,8 @@ func TestPromptDeveloperNoticeNearLimit(t *testing.T) {
 				return
 			}
 			content, _ := last.Content.(string)
-			if last.Role != "developer" || !strings.HasPrefix(content, "Context is nearly full.") {
-				t.Errorf("last message = %+v, want developer notice", last)
+			if last.Role != "system" || !strings.HasPrefix(content, "Context is nearly full.") {
+				t.Errorf("last message = %+v, want system notice", last)
 			}
 		})
 	}

@@ -209,7 +209,7 @@ func (c *Client) Prompt(s *Session, prompt string) (string, error) {
 		}
 		if resObj.Usage.Total >= s.Limit {
 			c.addMessage(s, &Message{
-				Role:    "developer",
+				Role:    "system",
 				Content: "Context is nearly full. DO NOT call more tools. Give the user a handoff prompt summarizing the task, progress, and next steps.",
 			})
 		}
