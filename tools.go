@@ -54,6 +54,7 @@ func Read(path string, lineNumbers bool) (string, error) {
 		return "", errors.New("file content must be valid UTF-8")
 	}
 	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
 	if !lineNumbers {
 		return text, nil
 	}
@@ -344,15 +345,17 @@ func Write(path, text string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create parent directories: %w", err)
 	}
-	return os.WriteFile(path, []byte(strings.ReplaceAll(text, "\r\n", "\n")), 0o644)
+	return os.WriteFile(path, []byte(text), 0o644)
 }
 
 func Edit(path, oldText, newText string) error {
 	old := []byte(strings.ReplaceAll(oldText, "\r\n", "\n"))
+	old = bytes.ReplaceAll(old, []byte("\r"), []byte("\n"))
 	if !utf8.Valid(old) {
 		return errors.New("oldText must be valid UTF-8")
 	}
 	new := []byte(strings.ReplaceAll(newText, "\r\n", "\n"))
+	new = bytes.ReplaceAll(new, []byte("\r"), []byte("\n"))
 	if !utf8.Valid(new) {
 		return errors.New("newText must be valid UTF-8")
 	}
@@ -375,11 +378,16 @@ func Edit(path, oldText, newText string) error {
 	if !utf8.Valid(raw) {
 		return errors.New("file content must be valid UTF-8")
 	}
+	useCRLF := bytes.Contains(raw, []byte("\r\n"))
 	raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
+	raw = bytes.ReplaceAll(raw, []byte("\r"), []byte("\n"))
 	if i := bytes.Index(raw, old); i == -1 || i != bytes.LastIndex(raw, old) {
 		return errors.New("oldText must occur exactly once in the file")
 	}
-	raw = bytes.ReplaceAll(bytes.Replace(raw, old, new, 1), []byte("\r\n"), []byte("\n"))
+	raw = bytes.Replace(raw, old, new, 1)
+	if useCRLF {
+		raw = bytes.ReplaceAll(raw, []byte("\n"), []byte("\r\n"))
+	}
 	if _, err := file.WriteAt(raw, 0); err != nil {
 		return err
 	}
