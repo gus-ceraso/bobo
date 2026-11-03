@@ -112,10 +112,14 @@ func (e Event) Compaction() *Compaction {
 	return &Compaction{}
 }
 
+func (Compaction) Event() Event {
+	return Event{body: map[string]any{"type": "compaction_trigger"}}
+}
+
 type FunctionCall struct {
 	ID        string
 	Name      string
-	Arguments map[string]any
+	Arguments string
 }
 
 func (e Event) FunctionCall() *FunctionCall {
@@ -125,10 +129,7 @@ func (e Event) FunctionCall() *FunctionCall {
 	var f FunctionCall
 	f.ID, _ = e.body["call_id"].(string)
 	f.Name, _ = e.body["name"].(string)
-	args, _ := e.body["arguments"].(string)
-	dec := json.NewDecoder(strings.NewReader(args))
-	dec.UseNumber()
-	_ = dec.Decode(&f.Arguments)
+	f.Arguments, _ = e.body["arguments"].(string)
 	return &f
 }
 
