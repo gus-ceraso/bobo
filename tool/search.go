@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"ceraso.dev/bobo/provider"
 )
 
 type Search struct{}
@@ -61,23 +63,23 @@ func (*Search) Schema() map[string]any {
 	}
 }
 
-func (*Search) Call(in string) string {
+func (*Search) Call(in string) []provider.Part {
 	out := "<search"
 	if !utf8.ValidString(in) {
-		return out + " error=\"invalid arguments: invalid utf-8\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: invalid utf-8\"/>")}}
 	}
 	dec := json.NewDecoder(strings.NewReader(in))
 	dec.UseNumber()
 	var args map[string]any
 	if err := dec.Decode(&args); err != nil {
-		return out + fmt.Sprintf(" error=%q/>", "invalid arguments: "+err.Error())
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "invalid arguments: "+err.Error()))}}
 	}
 	path := ""
 	v, ok := args["path"]
 	if ok && v != nil {
 		path, ok = v.(string)
 		if !ok {
-			return out + " error=\"invalid arguments: path is not a string\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: path is not a string\"/>")}}
 		}
 	}
 	if path == "" {
@@ -89,7 +91,7 @@ func (*Search) Call(in string) string {
 	if ok && v != nil {
 		pathPattern, ok = v.(string)
 		if !ok {
-			return out + " error=\"invalid arguments: path_pattern is not a string\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: path_pattern is not a string\"/>")}}
 		}
 	}
 	if pathPattern == "" {
@@ -98,27 +100,27 @@ func (*Search) Call(in string) string {
 	out += fmt.Sprintf(" path_pattern=%q", pathPattern)
 	pre, err := regexp.Compile(pathPattern)
 	if err != nil {
-		return out + fmt.Sprintf(" error=%q/>", "invalid arguments: invalid path_pattern: "+err.Error())
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "invalid arguments: invalid path_pattern: "+err.Error()))}}
 	}
 	linePattern := ""
 	v, ok = args["line_pattern"]
 	if ok && v != nil {
 		linePattern, ok = v.(string)
 		if !ok {
-			return out + " error=\"invalid arguments: line_pattern is not a string\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: line_pattern is not a string\"/>")}}
 		}
 	}
 	out += fmt.Sprintf(" line_pattern=%q", linePattern)
 	re, err := regexp.Compile(linePattern)
 	if err != nil {
-		return out + fmt.Sprintf(" error=%q/>", "invalid arguments: invalid line_pattern: "+err.Error())
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "invalid arguments: invalid line_pattern: "+err.Error()))}}
 	}
 	hiddenPaths := false
 	v, ok = args["hidden_paths"]
 	if ok && v != nil {
 		hiddenPaths, ok = v.(bool)
 		if !ok {
-			return out + " error=\"invalid arguments: hidden_paths is not a bool\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: hidden_paths is not a bool\"/>")}}
 		}
 	}
 	out += fmt.Sprintf(" hidden_paths=\"%t\"", hiddenPaths)
@@ -127,14 +129,14 @@ func (*Search) Call(in string) string {
 	if ok && v != nil {
 		n, ok := v.(json.Number)
 		if !ok {
-			return out + " error=\"invalid arguments: offset is not an integer\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: offset is not an integer\"/>")}}
 		}
 		i, err := n.Int64()
 		if err != nil {
-			return out + fmt.Sprintf(" error=%q/>", "invalid arguments: offset is not a valid integer: "+err.Error())
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "invalid arguments: offset is not a valid integer: "+err.Error()))}}
 		}
 		if i < 1 || i > math.MaxInt {
-			return out + " error=\"invalid arguments: offset is out of range\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: offset is out of range\"/>")}}
 		}
 		offset = int(i)
 	}
@@ -144,14 +146,14 @@ func (*Search) Call(in string) string {
 	if ok && v != nil {
 		n, ok := v.(json.Number)
 		if !ok {
-			return out + " error=\"invalid arguments: limit is not an integer\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: limit is not an integer\"/>")}}
 		}
 		i, err := n.Int64()
 		if err != nil {
-			return out + fmt.Sprintf(" error=%q/>", "invalid arguments: limit is not a valid integer: "+err.Error())
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "invalid arguments: limit is not a valid integer: "+err.Error()))}}
 		}
 		if i < 1 || i > math.MaxInt {
-			return out + " error=\"invalid arguments: limit is out of range\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: limit is out of range\"/>")}}
 		}
 		limit = int(i)
 	}
@@ -159,11 +161,11 @@ func (*Search) Call(in string) string {
 
 	info, err := os.Stat(path)
 	if err != nil {
-		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err))
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err)))}}
 	}
 	isDir := info.IsDir()
 	if !isDir && !info.Mode().IsRegular() {
-		return out + fmt.Sprintf(" error=%q/>", path+" is not a regular file or directory")
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", path+" is not a regular file or directory"))}}
 	}
 	dir, root := path, "."
 	if !isDir {
@@ -315,10 +317,10 @@ func (*Search) Call(in string) string {
 		return nil
 	})
 	if err != nil {
-		return out + fmt.Sprintf(" error=%q/>", err.Error())
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	if nextOffset != 0 {
 		out += fmt.Sprintf(" next_offset=\"%d\"", nextOffset)
 	}
-	return out + " error=\"\">\n" + string(body) + "</search>"
+	return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"\">\n" + string(body) + "</search>")}}
 }

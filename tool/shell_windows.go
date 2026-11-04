@@ -12,6 +12,8 @@ import (
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"ceraso.dev/bobo/provider"
 )
 
 type Shell struct{}
@@ -24,12 +26,12 @@ func (*Shell) Schema() map[string]any {
 	}
 }
 
-func (*Shell) Call(in string) string {
+func (*Shell) Call(in string) []provider.Part {
 	if !utf8.ValidString(in) {
-		return "<shell exit_code=\"-1\" truncated=\"false\" error=\"invalid arguments: invalid utf-8\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte("<shell exit_code=\"-1\" truncated=\"false\" error=\"invalid arguments: invalid utf-8\"/>")}}
 	}
 	if strings.IndexByte(in, 0) >= 0 {
-		return "<shell exit_code=\"-1\" truncated=\"false\" error=\"invalid arguments: script contains a null byte\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte("<shell exit_code=\"-1\" truncated=\"false\" error=\"invalid arguments: script contains a null byte\"/>")}}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -97,5 +99,5 @@ func (*Shell) Call(in string) string {
 	if len(text) > 0 && text[len(text)-1] != '\n' && len(text) < 1<<15 {
 		text += "\n"
 	}
-	return fmt.Sprintf("<shell exit_code=\"%d\" truncated=\"%t\" error=%q>\n%s</shell>", exitCode, truncated, message, text)
+	return []provider.Part{{ContentType: "text/plain", Content: []byte(fmt.Sprintf("<shell exit_code=\"%d\" truncated=\"%t\" error=%q>\n%s</shell>", exitCode, truncated, message, text))}}
 }

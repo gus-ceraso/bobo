@@ -1,7 +1,7 @@
 package tool
 
 import (
-	"encoding/base64"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -14,6 +14,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"ceraso.dev/bobo/provider"
 	"github.com/disintegration/imaging"
 	_ "golang.org/x/image/webp"
 )
@@ -111,27 +112,27 @@ func (*View) Schema() map[string]any {
 	}
 }
 
-func (*View) Call(in string) string {
+func (*View) Call(in string) []provider.Part {
 	out := "<view"
 	if !utf8.ValidString(in) {
-		return out + " error=\"invalid arguments: invalid utf-8\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: invalid utf-8\"/>")}}
 	}
 	dec := json.NewDecoder(strings.NewReader(in))
 	dec.UseNumber()
 	var args map[string]any
 	if err := dec.Decode(&args); err != nil {
-		return out + fmt.Sprintf(" error=%q/>", "invalid arguments: "+err.Error())
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "invalid arguments: "+err.Error()))}}
 	}
 	v, ok := args["path"]
 	if !ok {
-		return out + " error=\"invalid arguments: missing path\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: missing path\"/>")}}
 	}
 	path, ok := v.(string)
 	if !ok {
-		return out + " error=\"invalid arguments: path is not a string\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: path is not a string\"/>")}}
 	}
 	if path == "" {
-		return out + " error=\"invalid arguments: path is empty\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: path is empty\"/>")}}
 	}
 	out += fmt.Sprintf(" path=%q", path)
 	horizontalFlip := false
@@ -139,7 +140,7 @@ func (*View) Call(in string) string {
 	if ok && v != nil {
 		horizontalFlip, ok = v.(bool)
 		if !ok {
-			return out + " error=\"invalid arguments: horizontal_flip is not a bool\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: horizontal_flip is not a bool\"/>")}}
 		}
 	}
 	verticalFlip := false
@@ -147,7 +148,7 @@ func (*View) Call(in string) string {
 	if ok && v != nil {
 		verticalFlip, ok = v.(bool)
 		if !ok {
-			return out + " error=\"invalid arguments: vertical_flip is not a bool\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: vertical_flip is not a bool\"/>")}}
 		}
 	}
 	grayscale := false
@@ -155,7 +156,7 @@ func (*View) Call(in string) string {
 	if ok && v != nil {
 		grayscale, ok = v.(bool)
 		if !ok {
-			return out + " error=\"invalid arguments: grayscale is not a bool\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: grayscale is not a bool\"/>")}}
 		}
 	}
 	invert := false
@@ -163,7 +164,7 @@ func (*View) Call(in string) string {
 	if ok && v != nil {
 		invert, ok = v.(bool)
 		if !ok {
-			return out + " error=\"invalid arguments: invert is not a bool\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: invert is not a bool\"/>")}}
 		}
 	}
 	rotate := 0.0
@@ -171,11 +172,11 @@ func (*View) Call(in string) string {
 	if ok && v != nil {
 		n, ok := v.(json.Number)
 		if !ok {
-			return out + " error=\"invalid arguments: rotate is not a number\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: rotate is not a number\"/>")}}
 		}
 		f, err := n.Float64()
 		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return out + " error=\"invalid arguments: rotate must be finite\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: rotate must be finite\"/>")}}
 		}
 		rotate = f
 	}
@@ -184,14 +185,14 @@ func (*View) Call(in string) string {
 	if ok && v != nil {
 		n, ok := v.(json.Number)
 		if !ok {
-			return out + " error=\"invalid arguments: scale is not a number\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: scale is not a number\"/>")}}
 		}
 		f, err := n.Float64()
 		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return out + " error=\"invalid arguments: scale must be finite\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: scale must be finite\"/>")}}
 		}
 		if f <= 0 {
-			return out + " error=\"invalid arguments: scale must be greater than 0\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: scale must be greater than 0\"/>")}}
 		}
 		scale = f
 	}
@@ -200,14 +201,14 @@ func (*View) Call(in string) string {
 	if ok && v != nil {
 		n, ok := v.(json.Number)
 		if !ok {
-			return out + " error=\"invalid arguments: brightness is not a number\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: brightness is not a number\"/>")}}
 		}
 		f, err := n.Float64()
 		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return out + " error=\"invalid arguments: brightness must be finite\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: brightness must be finite\"/>")}}
 		}
 		if f < -1 || f > 1 {
-			return out + " error=\"invalid arguments: brightness must be between -1 and 1\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: brightness must be between -1 and 1\"/>")}}
 		}
 		brightness = f
 	}
@@ -216,14 +217,14 @@ func (*View) Call(in string) string {
 	if ok && v != nil {
 		n, ok := v.(json.Number)
 		if !ok {
-			return out + " error=\"invalid arguments: contrast is not a number\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: contrast is not a number\"/>")}}
 		}
 		f, err := n.Float64()
 		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return out + " error=\"invalid arguments: contrast must be finite\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: contrast must be finite\"/>")}}
 		}
 		if f < -1 || f > 1 {
-			return out + " error=\"invalid arguments: contrast must be between -1 and 1\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: contrast must be between -1 and 1\"/>")}}
 		}
 		contrast = f
 	}
@@ -232,14 +233,14 @@ func (*View) Call(in string) string {
 	if ok && v != nil {
 		n, ok := v.(json.Number)
 		if !ok {
-			return out + " error=\"invalid arguments: saturation is not a number\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: saturation is not a number\"/>")}}
 		}
 		f, err := n.Float64()
 		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return out + " error=\"invalid arguments: saturation must be finite\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: saturation must be finite\"/>")}}
 		}
 		if f < -1 || f > 1 {
-			return out + " error=\"invalid arguments: saturation must be between -1 and 1\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: saturation must be between -1 and 1\"/>")}}
 		}
 		saturation = f
 	}
@@ -248,14 +249,14 @@ func (*View) Call(in string) string {
 	if ok && v != nil {
 		n, ok := v.(json.Number)
 		if !ok {
-			return out + " error=\"invalid arguments: gamma is not a number\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: gamma is not a number\"/>")}}
 		}
 		f, err := n.Float64()
 		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return out + " error=\"invalid arguments: gamma must be finite\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: gamma must be finite\"/>")}}
 		}
 		if f <= 0 {
-			return out + " error=\"invalid arguments: gamma must be greater than 0\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: gamma must be greater than 0\"/>")}}
 		}
 		gamma = f
 	}
@@ -264,14 +265,14 @@ func (*View) Call(in string) string {
 	if ok && v != nil {
 		n, ok := v.(json.Number)
 		if !ok {
-			return out + " error=\"invalid arguments: blur is not a number\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: blur is not a number\"/>")}}
 		}
 		f, err := n.Float64()
 		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return out + " error=\"invalid arguments: blur must be finite\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: blur must be finite\"/>")}}
 		}
 		if f < 0 || f > 10 {
-			return out + " error=\"invalid arguments: blur must be between 0 and 10\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: blur must be between 0 and 10\"/>")}}
 		}
 		blur = f
 	}
@@ -280,14 +281,14 @@ func (*View) Call(in string) string {
 	if ok && v != nil {
 		n, ok := v.(json.Number)
 		if !ok {
-			return out + " error=\"invalid arguments: sharpness is not a number\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: sharpness is not a number\"/>")}}
 		}
 		f, err := n.Float64()
 		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return out + " error=\"invalid arguments: sharpness must be finite\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: sharpness must be finite\"/>")}}
 		}
 		if f < 0 || f > 10 {
-			return out + " error=\"invalid arguments: sharpness must be between 0 and 10\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: sharpness must be between 0 and 10\"/>")}}
 		}
 		sharpness = f
 	}
@@ -295,81 +296,81 @@ func (*View) Call(in string) string {
 	if v, ok := args["crop"]; ok && v != nil {
 		values, ok := v.([]any)
 		if !ok {
-			return out + " error=\"invalid arguments: crop is not an array\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: crop is not an array\"/>")}}
 		}
 		if len(values) != 0 && len(values) != 4 {
-			return out + " error=\"invalid arguments: crop must be empty or contain [left, top, right, bottom]\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: crop must be empty or contain [left, top, right, bottom]\"/>")}}
 		}
 		for _, v := range values {
 			n, ok := v.(json.Number)
 			if !ok {
-				return out + " error=\"invalid arguments: crop coordinates must be numbers\"/>"
+				return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: crop coordinates must be numbers\"/>")}}
 			}
 			f, err := n.Float64()
 			if err != nil || !(0 <= f && f <= 1) {
-				return out + " error=\"invalid arguments: crop coordinates must be between 0 and 1\"/>"
+				return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: crop coordinates must be between 0 and 1\"/>")}}
 			}
 			crop = append(crop, f)
 		}
 		if len(crop) != 0 && (crop[0] >= crop[2] || crop[1] >= crop[3]) {
-			return out + " error=\"invalid arguments: crop must satisfy left < right and top < bottom\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: crop must satisfy left < right and top < bottom\"/>")}}
 		}
 	}
 
 	info, err := os.Stat(path)
 	if err != nil {
-		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err))
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err)))}}
 	}
 	if !info.Mode().IsRegular() {
-		return out + fmt.Sprintf(" error=%q/>", path+" is not a regular file")
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", path+" is not a regular file"))}}
 	}
 	if info.Size() > 128<<20 {
-		return out + " error=\"file exceeds 128 MiB\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"file exceeds 128 MiB\"/>")}}
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("open %s: %v", path, err))
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("open %s: %v", path, err)))}}
 	}
 	defer file.Close()
 	info, err = file.Stat()
 	if err != nil {
-		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err))
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err)))}}
 	}
 	if !info.Mode().IsRegular() {
-		return out + fmt.Sprintf(" error=%q/>", path+" is not a regular file")
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", path+" is not a regular file"))}}
 	}
 	if info.Size() > 128<<20 {
-		return out + " error=\"file exceeds 128 MiB\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"file exceeds 128 MiB\"/>")}}
 	}
 	var header [512]byte
 	n, err := file.ReadAt(header[:], 0)
 	if err != nil && err != io.EOF {
-		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err))
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err)))}}
 	}
 	var img image.Image
 	switch http.DetectContentType(header[:n]) {
 	case "image/png", "image/jpeg", "image/webp":
 		config, _, err := image.DecodeConfig(file)
 		if err != nil {
-			return out + fmt.Sprintf(" error=%q/>", "decode image header: "+err.Error())
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "decode image header: "+err.Error()))}}
 		}
 		w, h := config.Width, config.Height
 		if w <= 0 || h <= 0 || w > 16384 || h > 16384 || int64(w)*int64(h) > 32_000_000 {
-			return out + " error=\"image exceeds size limits\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"image exceeds size limits\"/>")}}
 		}
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("seek %s: %v", path, err))
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("seek %s: %v", path, err)))}}
 		}
 		img, err = imaging.Decode(file, imaging.AutoOrientation(true))
 		if err != nil {
-			return out + fmt.Sprintf(" error=%q/>", "decode image: "+err.Error())
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "decode image: "+err.Error()))}}
 		}
 	default:
-		return out + " error=\"unsupported format; expected PNG, JPEG, or WebP\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"unsupported format; expected PNG, JPEG, or WebP\"/>")}}
 	}
 	w, h := img.Bounds().Dx(), img.Bounds().Dy()
 	if w <= 0 || h <= 0 || w > 16384 || h > 16384 || int64(w)*int64(h) > 32_000_000 {
-		return out + " error=\"image exceeds size limits\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"image exceeds size limits\"/>")}}
 	}
 	if len(crop) != 0 {
 		img = imaging.Crop(img, image.Rect(
@@ -406,14 +407,14 @@ func (*View) Call(in string) string {
 			w, h = int(rw), int(rh)
 		}
 		if w > 16384 || h > 16384 || int64(w)*int64(h) > 32_000_000 {
-			return out + " error=\"rotation exceeds size limits\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"rotation exceeds size limits\"/>")}}
 		}
 		img = imaging.Rotate(img, angle, color.NRGBA{})
 	}
 	sw := math.Max(1, math.Round(scale*float64(w)))
 	sh := math.Max(1, math.Round(scale*float64(h)))
 	if sw > 16384 || sh > 16384 || sw*sh > 32_000_000 {
-		return out + " error=\"scale exceeds size limits\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"scale exceeds size limits\"/>")}}
 	}
 	tw, th := int(sw), int(sh)
 	if edge := max(tw, th); edge > 1920 {
@@ -447,15 +448,13 @@ func (*View) Call(in string) string {
 	if sharpness != 0 {
 		img = imaging.Sharpen(img, sharpness)
 	}
-	var body strings.Builder
-	body.WriteString(out + " error=\"\">\ndata:image/png;base64,")
-	enc := base64.NewEncoder(base64.StdEncoding, &body)
-	if err := png.Encode(enc, img); err != nil {
-		return out + fmt.Sprintf(" error=%q/>", "encode PNG: "+err.Error())
+	var body bytes.Buffer
+	if err := png.Encode(&body, img); err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "encode PNG: "+err.Error()))}}
 	}
-	if err := enc.Close(); err != nil {
-		return out + fmt.Sprintf(" error=%q/>", "encode base64: "+err.Error())
+	return []provider.Part{
+		{ContentType: "text/plain", Content: []byte(out + " error=\"\">\n")},
+		{ContentType: "image/png", Content: body.Bytes()},
+		{ContentType: "text/plain", Content: []byte("\n</view>")},
 	}
-	body.WriteString("\n</view>")
-	return body.String()
 }

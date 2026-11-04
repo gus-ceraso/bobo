@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"unicode/utf8"
+
+	"ceraso.dev/bobo/provider"
 )
 
 type Read struct{}
@@ -48,27 +50,27 @@ func (*Read) Schema() map[string]any {
 	}
 }
 
-func (*Read) Call(in string) string {
+func (*Read) Call(in string) []provider.Part {
 	out := "<read"
 	if !utf8.ValidString(in) {
-		return out + " error=\"invalid arguments: invalid utf-8\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: invalid utf-8\"/>")}}
 	}
 	dec := json.NewDecoder(strings.NewReader(in))
 	dec.UseNumber()
 	var args map[string]any
 	if err := dec.Decode(&args); err != nil {
-		return out + fmt.Sprintf(" error=%q/>", "invalid arguments: "+err.Error())
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "invalid arguments: "+err.Error()))}}
 	}
 	v, ok := args["path"]
 	if !ok {
-		return out + " error=\"invalid arguments: missing path\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: missing path\"/>")}}
 	}
 	path, ok := v.(string)
 	if !ok {
-		return out + " error=\"invalid arguments: path is not a string\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: path is not a string\"/>")}}
 	}
 	if path == "" {
-		return out + " error=\"invalid arguments: path is empty\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: path is empty\"/>")}}
 	}
 	out += fmt.Sprintf(" path=%q", path)
 	showLineNumbers := false
@@ -76,7 +78,7 @@ func (*Read) Call(in string) string {
 	if ok && v != nil {
 		showLineNumbers, ok = v.(bool)
 		if !ok {
-			return out + " error=\"invalid arguments: show_line_numbers is not a bool\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: show_line_numbers is not a bool\"/>")}}
 		}
 	}
 	out += fmt.Sprintf(" show_line_numbers=\"%t\"", showLineNumbers)
@@ -85,14 +87,14 @@ func (*Read) Call(in string) string {
 	if ok && v != nil {
 		n, ok := v.(json.Number)
 		if !ok {
-			return out + " error=\"invalid arguments: offset is not an integer\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: offset is not an integer\"/>")}}
 		}
 		i, err := n.Int64()
 		if err != nil {
-			return out + fmt.Sprintf(" error=%q/>", "invalid arguments: offset is not a valid integer: "+err.Error())
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "invalid arguments: offset is not a valid integer: "+err.Error()))}}
 		}
 		if i < 1 || i > math.MaxInt {
-			return out + " error=\"invalid arguments: offset is out of range\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: offset is out of range\"/>")}}
 		}
 		offset = int(i)
 	}
@@ -102,14 +104,14 @@ func (*Read) Call(in string) string {
 	if ok && v != nil {
 		n, ok := v.(json.Number)
 		if !ok {
-			return out + " error=\"invalid arguments: limit is not an integer\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: limit is not an integer\"/>")}}
 		}
 		i, err := n.Int64()
 		if err != nil {
-			return out + fmt.Sprintf(" error=%q/>", "invalid arguments: limit is not a valid integer: "+err.Error())
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "invalid arguments: limit is not a valid integer: "+err.Error()))}}
 		}
 		if i < 1 || i > math.MaxInt {
-			return out + " error=\"invalid arguments: limit is out of range\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: limit is out of range\"/>")}}
 		}
 		limit = int(i)
 	}
@@ -117,22 +119,22 @@ func (*Read) Call(in string) string {
 
 	info, err := os.Stat(path)
 	if err != nil {
-		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err))
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err)))}}
 	}
 	if !info.Mode().IsRegular() {
-		return out + fmt.Sprintf(" error=%q/>", path+" is not a regular file")
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", path+" is not a regular file"))}}
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("open %s: %v", path, err))
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("open %s: %v", path, err)))}}
 	}
 	defer file.Close()
 	info, err = file.Stat()
 	if err != nil {
-		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err))
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err)))}}
 	}
 	if !info.Mode().IsRegular() {
-		return out + fmt.Sprintf(" error=%q/>", path+" is not a regular file")
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", path+" is not a regular file"))}}
 	}
 
 	body := make([]byte, 0, 1<<15)
@@ -143,16 +145,16 @@ func (*Read) Call(in string) string {
 			if _, err := reader.Peek(1); err == nil {
 				nextOffset = i
 			} else if !errors.Is(err, io.EOF) {
-				return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err))
+				return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err)))}}
 			}
 			break
 		}
 		line, err := reader.ReadSlice('\n')
 		if errors.Is(err, bufio.ErrBufferFull) {
-			return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("%s:%d exceeds the 32 KiB line limit", path, i))
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("%s:%d exceeds the 32 KiB line limit", path, i)))}}
 		}
 		if err != nil && !errors.Is(err, io.EOF) {
-			return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err))
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err)))}}
 		}
 		if len(line) == 0 {
 			break
@@ -169,14 +171,14 @@ func (*Read) Call(in string) string {
 			n++
 		}
 		if n > 1<<15 {
-			return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("%s:%d exceeds the 32 KiB line limit", path, i))
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("%s:%d exceeds the 32 KiB line limit", path, i)))}}
 		}
 		if len(body)+n > 1<<15 {
 			nextOffset = i
 			break
 		}
 		if !utf8.Valid(line) {
-			return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("%s:%d has invalid utf-8", path, i))
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("%s:%d has invalid utf-8", path, i)))}}
 		}
 		body = append(body, prefix...)
 		body = append(body, line...)
@@ -187,5 +189,5 @@ func (*Read) Call(in string) string {
 	if nextOffset != 0 {
 		out += fmt.Sprintf(" next_offset=\"%d\"", nextOffset)
 	}
-	return out + " error=\"\">\n" + string(body) + "</read>"
+	return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"\">\n" + string(body) + "</read>")}}
 }

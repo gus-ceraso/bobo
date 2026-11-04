@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"unicode/utf8"
+
+	"ceraso.dev/bobo/provider"
 )
 
 type Edit struct{}
@@ -40,72 +42,72 @@ func (*Edit) Schema() map[string]any {
 	}
 }
 
-func (*Edit) Call(in string) string {
+func (*Edit) Call(in string) []provider.Part {
 	out := "<edit"
 	if !utf8.ValidString(in) {
-		return out + " error=\"invalid arguments: invalid utf-8\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: invalid utf-8\"/>")}}
 	}
 	dec := json.NewDecoder(strings.NewReader(in))
 	var args map[string]any
 	if err := dec.Decode(&args); err != nil {
-		return out + fmt.Sprintf(" error=%q/>", "invalid arguments: "+err.Error())
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "invalid arguments: "+err.Error()))}}
 	}
 	v, ok := args["path"]
 	if !ok {
-		return out + " error=\"invalid arguments: missing path\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: missing path\"/>")}}
 	}
 	path, ok := v.(string)
 	if !ok {
-		return out + " error=\"invalid arguments: path is not a string\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: path is not a string\"/>")}}
 	}
 	if path == "" {
-		return out + " error=\"invalid arguments: path is empty\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: path is empty\"/>")}}
 	}
 	out += fmt.Sprintf(" path=%q", path)
 	v, ok = args["old_text"]
 	if !ok {
-		return out + " error=\"invalid arguments: missing old_text\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: missing old_text\"/>")}}
 	}
 	oldText, ok := v.(string)
 	if !ok {
-		return out + " error=\"invalid arguments: old_text is not a string\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: old_text is not a string\"/>")}}
 	}
 	if oldText == "" {
-		return out + " error=\"invalid arguments: old_text is empty\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: old_text is empty\"/>")}}
 	}
 	if len(oldText) > 1<<15 {
-		return out + " error=\"invalid arguments: old_text exceeds 32 KiB\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: old_text exceeds 32 KiB\"/>")}}
 	}
 	v, ok = args["new_text"]
 	if !ok {
-		return out + " error=\"invalid arguments: missing new_text\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: missing new_text\"/>")}}
 	}
 	newText, ok := v.(string)
 	if !ok {
-		return out + " error=\"invalid arguments: new_text is not a string\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: new_text is not a string\"/>")}}
 	}
 	if len(newText) > 1<<15 {
-		return out + " error=\"invalid arguments: new_text exceeds 32 KiB\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: new_text exceeds 32 KiB\"/>")}}
 	}
 
 	info, err := os.Stat(path)
 	if err != nil {
-		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err))
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err)))}}
 	}
 	if !info.Mode().IsRegular() {
-		return out + fmt.Sprintf(" error=%q/>", path+" is not a regular file")
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", path+" is not a regular file"))}}
 	}
 	file, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
-		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("open %s: %v", path, err))
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("open %s: %v", path, err)))}}
 	}
 	defer file.Close()
 	info, err = file.Stat()
 	if err != nil {
-		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err))
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err)))}}
 	}
 	if !info.Mode().IsRegular() {
-		return out + fmt.Sprintf(" error=%q/>", path+" is not a regular file")
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", path+" is not a regular file"))}}
 	}
 	old := []byte(oldText)
 	buf := make([]byte, (1<<15)+max(len(old)-1, utf8.UTFMax-1))
@@ -114,7 +116,7 @@ func (*Edit) Call(in string) string {
 	for {
 		n, err := io.ReadFull(file, buf[keep:keep+(1<<15)])
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-			return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err))
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err)))}}
 		}
 		size += int64(n)
 		total := keep + n
@@ -128,7 +130,7 @@ func (*Edit) Call(in string) string {
 			}
 		}
 		if !utf8.Valid(buf[valid:end]) {
-			return out + " error=\"file content must be valid utf-8\"/>"
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"file content must be valid utf-8\"/>")}}
 		}
 		for start := max(0, keep-len(old)+1); start < total; {
 			i := bytes.Index(buf[start:total], old)
@@ -136,7 +138,7 @@ func (*Edit) Call(in string) string {
 				break
 			}
 			if match != -1 {
-				return out + " error=\"old_text must occur exactly once in the file\"/>"
+				return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"old_text must occur exactly once in the file\"/>")}}
 			}
 			match = size - int64(total) + int64(start+i)
 			start += i + 1
@@ -149,7 +151,7 @@ func (*Edit) Call(in string) string {
 		copy(buf, buf[total-keep:total])
 	}
 	if match == -1 {
-		return out + " error=\"old_text must occur exactly once in the file\"/>"
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"old_text must occur exactly once in the file\"/>")}}
 	}
 	if oldText != newText {
 		delta := int64(len(newText) - len(oldText))
@@ -161,24 +163,24 @@ func (*Edit) Call(in string) string {
 				pos = size - moved - n
 			}
 			if _, err := file.ReadAt(buf[:n], pos); err != nil {
-				return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err))
+				return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err)))}}
 			}
 			if _, err := file.WriteAt(buf[:n], pos+delta); err != nil {
-				return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("write %s: %v", path, err))
+				return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("write %s: %v", path, err)))}}
 			}
 			moved += n
 		}
 		if _, err := file.WriteAt([]byte(newText), match); err != nil {
-			return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("write %s: %v", path, err))
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("write %s: %v", path, err)))}}
 		}
 		if delta != 0 {
 			if err := file.Truncate(size + delta); err != nil {
-				return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("truncate %s: %v", path, err))
+				return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("truncate %s: %v", path, err)))}}
 			}
 		}
 	}
 	if err := file.Close(); err != nil {
-		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("close %s: %v", path, err))
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("close %s: %v", path, err)))}}
 	}
-	return out + " error=\"\"/>"
+	return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"\"/>")}}
 }
