@@ -2,252 +2,190 @@ package tool
 
 import (
 	"bufio"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
-
-	"github.com/gen2brain/go-fitz"
+	"unicode/utf8"
 )
 
-type Read struct {
-	HiddenFiles bool
-	LocalFiles  bool
-}
+type Read struct{}
 
-func (t *Read) Schema() map[string]any {
+func (*Read) Schema() map[string]any {
 	return map[string]any{
+		"type":        "function",
 		"name":        "read",
-		"description": "Read a local text file, PDF, image (JPEG, PNG, or WebP), or directory. Text files return lines, PDFs return pages as images, and directories return entry names, with a trailing \"/\" on subdirectories. The result includes the total line, page, or entry count for paging. Text files with lines longer than 64 KiB aren't supported.",
+		"description": "Read a text file. Returns at most limit lines or 32KiB (whichever is hit first).",
 		"parameters": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"path": map[string]any{
 					"type":        "string",
-					"description": pathDescription("Path to the file or directory.", t.LocalFiles, t.HiddenFiles),
+					"description": "Path to the file.",
+				},
+				"show_line_numbers": map[string]any{
+					"type":        []string{"boolean", "null"},
+					"description": "If true, prefix every line by its number.",
 				},
 				"offset": map[string]any{
-					"type":        "integer",
+					"type":        []string{"integer", "null"},
 					"minimum":     1,
-					"description": "1-based line, PDF page, or directory entry to start from. Defaults to 1. Ignored for images.",
+					"description": "1-based line number to start from. Defaults to 1.",
 				},
 				"limit": map[string]any{
-					"type":        "integer",
+					"type":        []string{"integer", "null"},
 					"minimum":     1,
-					"description": "Maximum lines, PDF pages, or directory entries to return. Defaults to 1000 lines or entries, or 5 pages. Ignored for images.",
+					"description": "Maximum number of lines to return. Defaults to 1000.",
 				},
 			},
-			"required": []string{"path"},
+			"required":             []string{"path", "show_line_numbers", "offset", "limit"},
+			"additionalProperties": false,
 		},
+		"strict": true,
 	}
 }
 
-func (t *Read) Call(args map[string]any) any {
-	var metadata struct {
-		Error     string `json:"error,omitempty"`
-		Path      string `json:"path,omitempty"`
-		MediaType string `json:"media_type,omitempty"`
-		Offset    int    `json:"offset,omitempty"`
-		Limit     int    `json:"limit,omitempty"`
-		Total     int    `json:"total,omitempty"`
+func (*Read) Call(in string) string {
+	out := "<read"
+	if !utf8.ValidString(in) {
+		return out + " error=\"invalid arguments: invalid utf-8\"/>"
 	}
+	dec := json.NewDecoder(strings.NewReader(in))
+	dec.UseNumber()
+	var args map[string]any
+	if err := dec.Decode(&args); err != nil {
+		return out + fmt.Sprintf(" error=%q/>", "invalid arguments: "+err.Error())
+	}
+	v, ok := args["path"]
+	if !ok {
+		return out + " error=\"invalid arguments: missing path\"/>"
+	}
+	path, ok := v.(string)
+	if !ok {
+		return out + " error=\"invalid arguments: path is not a string\"/>"
+	}
+	if path == "" {
+		return out + " error=\"invalid arguments: path is empty\"/>"
+	}
+	out += fmt.Sprintf(" path=%q", path)
+	showLineNumbers := false
+	v, ok = args["show_line_numbers"]
+	if ok && v != nil {
+		showLineNumbers, ok = v.(bool)
+		if !ok {
+			return out + " error=\"invalid arguments: show_line_numbers is not a bool\"/>"
+		}
+	}
+	out += fmt.Sprintf(" show_line_numbers=\"%t\"", showLineNumbers)
+	offset := 1
+	v, ok = args["offset"]
+	if ok && v != nil {
+		n, ok := v.(json.Number)
+		if !ok {
+			return out + " error=\"invalid arguments: offset is not an integer\"/>"
+		}
+		i, err := n.Int64()
+		if err != nil {
+			return out + fmt.Sprintf(" error=%q/>", "invalid arguments: offset is not a valid integer: "+err.Error())
+		}
+		if i < 1 || i > math.MaxInt {
+			return out + " error=\"invalid arguments: offset is out of range\"/>"
+		}
+		offset = int(i)
+	}
+	out += fmt.Sprintf(" offset=\"%d\"", offset)
+	limit := 1000
+	v, ok = args["limit"]
+	if ok && v != nil {
+		n, ok := v.(json.Number)
+		if !ok {
+			return out + " error=\"invalid arguments: limit is not an integer\"/>"
+		}
+		i, err := n.Int64()
+		if err != nil {
+			return out + fmt.Sprintf(" error=%q/>", "invalid arguments: limit is not a valid integer: "+err.Error())
+		}
+		if i < 1 || i > math.MaxInt {
+			return out + " error=\"invalid arguments: limit is out of range\"/>"
+		}
+		limit = int(i)
+	}
+	out += fmt.Sprintf(" limit=\"%d\"", limit)
 
-	metadata.Path, _ = argString(args, "path")
-	if metadata.Path == "" {
-		metadata.Error = "invalid arguments: missing path string"
-		return enc(metadata)
-	}
-	offset, err := argOptionalPositive(args, "offset")
+	info, err := os.Stat(path)
 	if err != nil {
-		metadata.Error = err.Error()
-		return enc(metadata)
+		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err))
 	}
-	metadata.Offset = offset
-	limit, err := argOptionalPositive(args, "limit")
+	if !info.Mode().IsRegular() {
+		return out + fmt.Sprintf(" error=%q/>", path+" is not a regular file")
+	}
+	file, err := os.Open(path)
 	if err != nil {
-		metadata.Error = err.Error()
-		return enc(metadata)
-	}
-	metadata.Limit = limit
-
-	if !t.HiddenFiles && hasHiddenComponent(metadata.Path) {
-		metadata.Error = "invalid arguments: hidden path not allowed"
-		return enc(metadata)
-	}
-	if t.LocalFiles && !filepath.IsLocal(metadata.Path) {
-		metadata.Error = "invalid arguments: non-local path not allowed"
-		return enc(metadata)
-	}
-
-	file, err := os.Open(metadata.Path)
-	if err != nil {
-		metadata.Error = fmt.Sprintf("open: %s", err)
-		return enc(metadata)
+		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("open %s: %v", path, err))
 	}
 	defer file.Close()
-	info, err := file.Stat()
+	info, err = file.Stat()
 	if err != nil {
-		metadata.Error = fmt.Sprintf("stat: %s", err)
-		return enc(metadata)
+		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err))
+	}
+	if !info.Mode().IsRegular() {
+		return out + fmt.Sprintf(" error=%q/>", path+" is not a regular file")
 	}
 
-	if info.IsDir() {
-		if metadata.Offset == 0 {
-			metadata.Offset = 1
-		}
-		if metadata.Limit == 0 {
-			metadata.Limit = 1000
-		}
-		metadata.MediaType = "inode/directory"
-		entries, err := file.ReadDir(0)
-		if err != nil {
-			metadata.Error = fmt.Sprintf("readdir: %s", err)
-			return enc(metadata)
-		}
-		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-		var visible []os.DirEntry
-		for _, entry := range entries {
-			if t.HiddenFiles || !hasHiddenComponent(entry.Name()) {
-				visible = append(visible, entry)
+	body := make([]byte, 0, 1<<15)
+	reader := bufio.NewReaderSize(file, 1<<15)
+	nextOffset := 0
+	for i := 1; ; i++ {
+		if len(body) == 1<<15 || (i >= offset && i-offset >= limit) {
+			if _, err := reader.Peek(1); err == nil {
+				nextOffset = i
+			} else if !errors.Is(err, io.EOF) {
+				return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err))
 			}
+			break
 		}
-		metadata.Total = len(visible)
-		var lines []string
-		for i, entry := range visible {
-			if i+1 < metadata.Offset {
-				continue
-			}
-			name := entry.Name()
-			if entry.IsDir() {
-				name += "/"
-			}
-			lines = append(lines, name)
-			if len(lines) == metadata.Limit {
-				break
-			}
+		line, err := reader.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("%s:%d exceeds the 32 KiB line limit", path, i))
 		}
-		content := strings.Join(lines, "\n")
-		return []map[string]any{
-			map[string]any{
-				"type": "text",
-				"text": enc(metadata),
-			},
-			map[string]any{
-				"type": "text",
-				"text": content,
-			},
+		if err != nil && !errors.Is(err, io.EOF) {
+			return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err))
 		}
-	}
-
-	metadata.MediaType, err = detectMediaType(file)
-	if err != nil {
-		metadata.Error = fmt.Sprintf("detect media type: %s", err)
-		return enc(metadata)
-	}
-	if !containsAny(metadata.MediaType, "text/", "application/json", "application/pdf", "image/jpeg", "image/png", "image/webp") {
-		metadata.Error = "file media type not supported"
-		return enc(metadata)
-	}
-
-	if containsAny(metadata.MediaType, "image/jpeg", "image/png", "image/webp") {
-		content, err := io.ReadAll(file)
-		if err != nil {
-			metadata.Error = fmt.Sprintf("read: %s", err)
-			return enc(metadata)
+		if len(line) == 0 {
+			break
 		}
-		return []map[string]any{
-			map[string]any{
-				"type": "text",
-				"text": enc(metadata),
-			},
-			map[string]any{
-				"type": "image_url",
-				"image_url": map[string]any{
-					"url": encImage(metadata.MediaType, content),
-				},
-			},
-		}
-	}
-
-	if strings.Contains(metadata.MediaType, "application/pdf") {
-		if metadata.Offset == 0 {
-			metadata.Offset = 1
-		}
-		if metadata.Limit == 0 {
-			metadata.Limit = 5
-		}
-		doc, err := fitz.NewFromReader(file)
-		if err != nil {
-			metadata.Error = fmt.Sprintf("load PDF: %s", err)
-			return enc(metadata)
-		}
-		defer doc.Close()
-		metadata.Total = doc.NumPage()
-		var pages [][]byte
-		for i := 1; i <= metadata.Total; i++ {
-			if i < metadata.Offset {
-				continue
-			}
-			page, err := doc.ImagePNG(i-1, 150.0)
-			if err != nil {
-				metadata.Error = fmt.Sprintf("extract PDF page %d: %s", i, err)
-				return enc(metadata)
-			}
-			pages = append(pages, page)
-			if len(pages) == metadata.Limit {
-				break
-			}
-		}
-		ret := []map[string]any{
-			map[string]any{
-				"type": "text",
-				"text": enc(metadata),
-			},
-		}
-		for _, page := range pages {
-			ret = append(ret, map[string]any{
-				"type": "image_url",
-				"image_url": map[string]any{
-					"url": encImage("image/png", page),
-				},
-			})
-		}
-		return ret
-	}
-
-	if metadata.Offset == 0 {
-		metadata.Offset = 1
-	}
-	if metadata.Limit == 0 {
-		metadata.Limit = 1000
-	}
-	var lines []string
-	s := bufio.NewScanner(file)
-	var n int
-	for n = 1; s.Scan(); n += 1 {
-		if n < metadata.Offset {
+		if i < offset {
 			continue
 		}
-		if len(lines) < metadata.Limit {
-			lines = append(lines, s.Text())
+		prefix := ""
+		if showLineNumbers {
+			prefix = fmt.Sprintf("%d:", i)
+		}
+		n := len(prefix) + len(line)
+		if line[len(line)-1] != '\n' {
+			n++
+		}
+		if n > 1<<15 {
+			return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("%s:%d exceeds the 32 KiB line limit", path, i))
+		}
+		if len(body)+n > 1<<15 {
+			nextOffset = i
+			break
+		}
+		if !utf8.Valid(line) {
+			return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("%s:%d has invalid utf-8", path, i))
+		}
+		body = append(body, prefix...)
+		body = append(body, line...)
+		if body[len(body)-1] != '\n' {
+			body = append(body, '\n')
 		}
 	}
-	if err := s.Err(); err != nil {
-		metadata.Error = fmt.Sprintf("scanning text: %s", err)
-		return enc(metadata)
+	if nextOffset != 0 {
+		out += fmt.Sprintf(" next_offset=\"%d\"", nextOffset)
 	}
-	metadata.Total = n - 1
-	content := strings.Join(lines, "\n")
-	return []map[string]any{
-		map[string]any{
-			"type": "text",
-			"text": enc(metadata),
-		},
-		map[string]any{
-			"type": "text",
-			"text": content,
-		},
-	}
+	return out + " error=\"\">\n" + string(body) + "</read>"
 }

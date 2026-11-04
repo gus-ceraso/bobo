@@ -1,18 +1,20 @@
 package tool
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode/utf8"
 )
 
-type Write struct {
-	HiddenFiles bool
-	LocalFiles  bool
-}
+type Write struct{}
 
-func (t *Write) Schema() map[string]any {
+func (*Write) Schema() map[string]any {
 	return map[string]any{
+		"type":        "function",
 		"name":        "write",
 		"description": "Create a file or replace an existing file's contents with text. Missing parent directories are created. Prefer edit for small changes to existing files.",
 		"parameters": map[string]any{
@@ -20,50 +22,81 @@ func (t *Write) Schema() map[string]any {
 			"properties": map[string]any{
 				"path": map[string]any{
 					"type":        "string",
-					"description": pathDescription("Path to the file.", t.LocalFiles, t.HiddenFiles),
+					"description": "Path to the file.",
 				},
 				"text": map[string]any{
 					"type":        "string",
 					"description": "Complete new contents of the file.",
 				},
 			},
-			"required": []string{"path", "text"},
+			"required":             []string{"path", "text"},
+			"additionalProperties": false,
 		},
+		"strict": true,
 	}
 }
 
-func (t *Write) Call(args map[string]any) any {
-	var metadata struct {
-		Error string `json:"error,omitempty"`
-		Path  string `json:"path,omitempty"`
+func (*Write) Call(in string) string {
+	out := "<write"
+	if !utf8.ValidString(in) {
+		return out + " error=\"invalid arguments: invalid utf-8\"/>"
 	}
-
-	metadata.Path, _ = argString(args, "path")
-	if metadata.Path == "" {
-		metadata.Error = "invalid arguments: missing path string"
-		return enc(metadata)
+	dec := json.NewDecoder(strings.NewReader(in))
+	var args map[string]any
+	if err := dec.Decode(&args); err != nil {
+		return out + fmt.Sprintf(" error=%q/>", "invalid arguments: "+err.Error())
 	}
-	content, ok := argString(args, "text")
+	v, ok := args["path"]
 	if !ok {
-		metadata.Error = "invalid arguments: missing text string"
-		return enc(metadata)
+		return out + " error=\"invalid arguments: missing path\"/>"
+	}
+	path, ok := v.(string)
+	if !ok {
+		return out + " error=\"invalid arguments: path is not a string\"/>"
+	}
+	if path == "" {
+		return out + " error=\"invalid arguments: path is empty\"/>"
+	}
+	out += fmt.Sprintf(" path=%q", path)
+	v, ok = args["text"]
+	if !ok {
+		return out + " error=\"invalid arguments: missing text\"/>"
+	}
+	text, ok := v.(string)
+	if !ok {
+		return out + " error=\"invalid arguments: text is not a string\"/>"
 	}
 
-	if !t.HiddenFiles && hasHiddenComponent(metadata.Path) {
-		metadata.Error = "invalid arguments: hidden path not allowed"
-		return enc(metadata)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("create parent directories for %s: %v", path, err))
 	}
-	if t.LocalFiles && !filepath.IsLocal(metadata.Path) {
-		metadata.Error = "invalid arguments: non-local path not allowed"
-		return enc(metadata)
+	info, err := os.Stat(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err))
 	}
-
-	if err := os.MkdirAll(filepath.Dir(metadata.Path), 0o755); err != nil {
-		metadata.Error = fmt.Sprintf("mkdir -p: %s", err)
-		return enc(metadata)
+	if err == nil && !info.Mode().IsRegular() {
+		return out + fmt.Sprintf(" error=%q/>", path+" is not a regular file")
 	}
-	if err := os.WriteFile(metadata.Path, []byte(content), 0o644); err != nil {
-		metadata.Error = fmt.Sprintf("write: %s", err)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o644)
+	if err != nil {
+		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("open %s: %v", path, err))
 	}
-	return enc(metadata)
+	defer file.Close()
+	info, err = file.Stat()
+	if err != nil {
+		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err))
+	}
+	if !info.Mode().IsRegular() {
+		return out + fmt.Sprintf(" error=%q/>", path+" is not a regular file")
+	}
+	if _, err := file.WriteString(text); err != nil {
+		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("write %s: %v", path, err))
+	}
+	if err := file.Truncate(int64(len(text))); err != nil {
+		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("truncate %s: %v", path, err))
+	}
+	if err := file.Close(); err != nil {
+		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("close %s: %v", path, err))
+	}
+	return out + " error=\"\"/>"
 }

@@ -2,20 +2,19 @@ package tool
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
-type Edit struct {
-	HiddenFiles bool
-	LocalFiles  bool
-}
+type Edit struct{}
 
-func (t *Edit) Schema() map[string]any {
+func (*Edit) Schema() map[string]any {
 	return map[string]any{
+		"type":        "function",
 		"name":        "edit",
 		"description": "Replace exactly one occurrence of old_text with new_text in an existing text file. Matching is literal and case-sensitive, including whitespace and line breaks. The edit fails if old_text isn't found or occurs more than once. Include surrounding lines to make it unique.",
 		"parameters": map[string]any{
@@ -23,111 +22,163 @@ func (t *Edit) Schema() map[string]any {
 			"properties": map[string]any{
 				"path": map[string]any{
 					"type":        "string",
-					"description": pathDescription("Path to the file.", t.LocalFiles, t.HiddenFiles),
+					"description": "Path to the file.",
 				},
 				"old_text": map[string]any{
 					"type":        "string",
-					"description": "Exact text to replace. Must occur exactly once in the file.",
+					"description": "Nonempty exact text to replace. Must occur exactly once in the file.",
 				},
 				"new_text": map[string]any{
 					"type":        "string",
 					"description": "Replacement text. Use an empty string to delete old_text.",
 				},
 			},
-			"required": []string{"path", "old_text", "new_text"},
+			"required":             []string{"path", "old_text", "new_text"},
+			"additionalProperties": false,
 		},
+		"strict": true,
 	}
 }
 
-func (t *Edit) Call(args map[string]any) any {
-	var metadata struct {
-		Error string `json:"error,omitempty"`
-		Path  string `json:"path,omitempty"`
+func (*Edit) Call(in string) string {
+	out := "<edit"
+	if !utf8.ValidString(in) {
+		return out + " error=\"invalid arguments: invalid utf-8\"/>"
 	}
-
-	metadata.Path, _ = argString(args, "path")
-	if metadata.Path == "" {
-		metadata.Error = "invalid arguments: missing path string"
-		return enc(metadata)
+	dec := json.NewDecoder(strings.NewReader(in))
+	var args map[string]any
+	if err := dec.Decode(&args); err != nil {
+		return out + fmt.Sprintf(" error=%q/>", "invalid arguments: "+err.Error())
 	}
-	oldText, _ := argString(args, "old_text")
-	old := []byte(oldText)
-	if len(old) == 0 {
-		metadata.Error = "invalid arguments: missing old_text string"
-		return enc(metadata)
-	}
-	newText, ok := argString(args, "new_text")
+	v, ok := args["path"]
 	if !ok {
-		metadata.Error = "invalid arguments: missing new_text string"
-		return enc(metadata)
+		return out + " error=\"invalid arguments: missing path\"/>"
 	}
-	new := []byte(newText)
+	path, ok := v.(string)
+	if !ok {
+		return out + " error=\"invalid arguments: path is not a string\"/>"
+	}
+	if path == "" {
+		return out + " error=\"invalid arguments: path is empty\"/>"
+	}
+	out += fmt.Sprintf(" path=%q", path)
+	v, ok = args["old_text"]
+	if !ok {
+		return out + " error=\"invalid arguments: missing old_text\"/>"
+	}
+	oldText, ok := v.(string)
+	if !ok {
+		return out + " error=\"invalid arguments: old_text is not a string\"/>"
+	}
+	if oldText == "" {
+		return out + " error=\"invalid arguments: old_text is empty\"/>"
+	}
+	if len(oldText) > 1<<15 {
+		return out + " error=\"invalid arguments: old_text exceeds 32 KiB\"/>"
+	}
+	v, ok = args["new_text"]
+	if !ok {
+		return out + " error=\"invalid arguments: missing new_text\"/>"
+	}
+	newText, ok := v.(string)
+	if !ok {
+		return out + " error=\"invalid arguments: new_text is not a string\"/>"
+	}
+	if len(newText) > 1<<15 {
+		return out + " error=\"invalid arguments: new_text exceeds 32 KiB\"/>"
+	}
 
-	if !t.HiddenFiles && hasHiddenComponent(metadata.Path) {
-		metadata.Error = "invalid arguments: hidden path not allowed"
-		return enc(metadata)
-	}
-	if t.LocalFiles && !filepath.IsLocal(metadata.Path) {
-		metadata.Error = "invalid arguments: non-local path not allowed"
-		return enc(metadata)
-	}
-
-	file, err := os.OpenFile(metadata.Path, os.O_RDWR, 0)
+	info, err := os.Stat(path)
 	if err != nil {
-		metadata.Error = fmt.Sprintf("open: %s", err)
-		return enc(metadata)
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		metadata.Error = fmt.Sprintf("stat: %s", err)
-		return enc(metadata)
+		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err))
 	}
 	if !info.Mode().IsRegular() {
-		metadata.Error = fmt.Sprintf("'%s' is not a text file", metadata.Path)
-		return enc(metadata)
+		return out + fmt.Sprintf(" error=%q/>", path+" is not a regular file")
 	}
-	mediaType, err := detectMediaType(file)
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
-		metadata.Error = fmt.Sprintf("detect media type: %s", err)
-		return enc(metadata)
+		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("open %s: %v", path, err))
 	}
-	if !strings.Contains(mediaType, "text/") {
-		metadata.Error = fmt.Sprintf("'%s' is not a text file", metadata.Path)
-		return enc(metadata)
-	}
-
-	content, err := io.ReadAll(file)
+	defer file.Close()
+	info, err = file.Stat()
 	if err != nil {
-		metadata.Error = fmt.Sprintf("read: %s", err)
-		return enc(metadata)
+		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err))
 	}
-	if bytes.Contains(content, []byte("\r\n")) {
-		old = crlf(old)
-		new = crlf(new)
+	if !info.Mode().IsRegular() {
+		return out + fmt.Sprintf(" error=%q/>", path+" is not a regular file")
 	}
-	i := bytes.Index(content, old)
-	if i == -1 {
-		metadata.Error = fmt.Sprintf("'%s' does not contain old_text", metadata.Path)
-		return enc(metadata)
+	old := []byte(oldText)
+	buf := make([]byte, (1<<15)+max(len(old)-1, utf8.UTFMax-1))
+	keep, valid := 0, 0
+	size, match := int64(0), int64(-1)
+	for {
+		n, err := io.ReadFull(file, buf[keep:keep+(1<<15)])
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err))
+		}
+		size += int64(n)
+		total := keep + n
+		end := total
+		if err == nil {
+			for i := max(valid, total-utf8.UTFMax+1); i < total; i++ {
+				if !utf8.FullRune(buf[i:total]) {
+					end = i
+					break
+				}
+			}
+		}
+		if !utf8.Valid(buf[valid:end]) {
+			return out + " error=\"file content must be valid utf-8\"/>"
+		}
+		for start := max(0, keep-len(old)+1); start < total; {
+			i := bytes.Index(buf[start:total], old)
+			if i == -1 {
+				break
+			}
+			if match != -1 {
+				return out + " error=\"old_text must occur exactly once in the file\"/>"
+			}
+			match = size - int64(total) + int64(start+i)
+			start += i + 1
+		}
+		if err != nil {
+			break
+		}
+		keep = min(total, max(len(old)-1, utf8.UTFMax-1))
+		valid = end - total + keep
+		copy(buf, buf[total-keep:total])
 	}
-	if bytes.LastIndex(content, old) != i {
-		metadata.Error = fmt.Sprintf("'%s' does not contain old_text exactly once", metadata.Path)
-		return enc(metadata)
+	if match == -1 {
+		return out + " error=\"old_text must occur exactly once in the file\"/>"
 	}
-	content = bytes.Replace(content, old, new, 1)
-	if _, err := file.WriteAt(content, 0); err != nil {
-		metadata.Error = fmt.Sprintf("write: %s", err)
-		return enc(metadata)
+	if oldText != newText {
+		delta := int64(len(newText) - len(oldText))
+		tail := match + int64(len(oldText))
+		for moved := int64(0); delta != 0 && moved < size-tail; {
+			n := min(int64(1<<15), size-tail-moved)
+			pos := tail + moved
+			if delta > 0 {
+				pos = size - moved - n
+			}
+			if _, err := file.ReadAt(buf[:n], pos); err != nil {
+				return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err))
+			}
+			if _, err := file.WriteAt(buf[:n], pos+delta); err != nil {
+				return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("write %s: %v", path, err))
+			}
+			moved += n
+		}
+		if _, err := file.WriteAt([]byte(newText), match); err != nil {
+			return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("write %s: %v", path, err))
+		}
+		if delta != 0 {
+			if err := file.Truncate(size + delta); err != nil {
+				return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("truncate %s: %v", path, err))
+			}
+		}
 	}
-	if err := file.Truncate(int64(len(content))); err != nil {
-		metadata.Error = fmt.Sprintf("truncate: %s", err)
-		return enc(metadata)
+	if err := file.Close(); err != nil {
+		return out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("close %s: %v", path, err))
 	}
-	return enc(metadata)
-}
-
-func crlf(b []byte) []byte {
-	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
-	return bytes.ReplaceAll(b, []byte("\n"), []byte("\r\n"))
+	return out + " error=\"\"/>"
 }
