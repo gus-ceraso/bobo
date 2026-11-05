@@ -18,7 +18,12 @@ func (e Event) MarshalJSON() ([]byte, error) {
 }
 
 func (e *Event) UnmarshalJSON(data []byte) error {
-	return json.Unmarshal(data, &e.body)
+	var body map[string]any
+	if err := json.Unmarshal(data, &body); err != nil {
+		return err
+	}
+	e.body = body
+	return nil
 }
 
 type Message struct {
@@ -81,7 +86,16 @@ func (e Event) Compaction() *Compaction {
 	return &Compaction{}
 }
 
-func (Compaction) Event() Event {
+type CompactionTrigger struct{}
+
+func (e Event) CompactionTrigger() *CompactionTrigger {
+	if t, _ := e.body["type"].(string); t != "compaction_trigger" {
+		return nil
+	}
+	return &CompactionTrigger{}
+}
+
+func (CompactionTrigger) Event() Event {
 	return Event{body: map[string]any{"type": "compaction_trigger"}}
 }
 
@@ -105,6 +119,16 @@ func (e Event) FunctionCall() *FunctionCall {
 type FunctionCallOutput struct {
 	ID     string
 	Output []Part
+}
+
+func (e Event) FunctionCallOutput() *FunctionCallOutput {
+	if t, _ := e.body["type"].(string); t != "function_call_output" {
+		return nil
+	}
+	var f FunctionCallOutput
+	f.ID, _ = e.body["call_id"].(string)
+	f.Output = decodeParts(e.body["output"])
+	return &f
 }
 
 func (f FunctionCallOutput) Event() Event {
@@ -135,6 +159,16 @@ func (e Event) ToolCall() *ToolCall {
 type ToolCallOutput struct {
 	ID     string
 	Output []Part
+}
+
+func (e Event) ToolCallOutput() *ToolCallOutput {
+	if t, _ := e.body["type"].(string); t != "custom_tool_call_output" {
+		return nil
+	}
+	var f ToolCallOutput
+	f.ID, _ = e.body["call_id"].(string)
+	f.Output = decodeParts(e.body["output"])
+	return &f
 }
 
 func (f ToolCallOutput) Event() Event {
