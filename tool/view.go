@@ -2,6 +2,7 @@ package tool
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -112,8 +113,11 @@ func (*View) Schema() map[string]any {
 	}
 }
 
-func (*View) Call(in string) []provider.Part {
+func (*View) Call(ctx context.Context, in string) []provider.Part {
 	out := "<view"
+	if err := ctx.Err(); err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+	}
 	if !utf8.ValidString(in) {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: invalid utf-8\"/>")}}
 	}
@@ -317,6 +321,9 @@ func (*View) Call(in string) []provider.Part {
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err)))}}
@@ -361,12 +368,18 @@ func (*View) Call(in string) []provider.Part {
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("seek %s: %v", path, err)))}}
 		}
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 		img, err = imaging.Decode(file, imaging.AutoOrientation(true))
 		if err != nil {
 			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "decode image: "+err.Error()))}}
 		}
 	default:
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"unsupported format; expected PNG, JPEG, or WebP\"/>")}}
+	}
+	if err := ctx.Err(); err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	w, h := img.Bounds().Dx(), img.Bounds().Dy()
 	if w <= 0 || h <= 0 || w > 16384 || h > 16384 || int64(w)*int64(h) > 32_000_000 {
@@ -379,13 +392,22 @@ func (*View) Call(in string) []provider.Part {
 			int(math.Ceil(crop[2]*float64(w))),
 			int(math.Ceil(crop[3]*float64(h))),
 		).Add(img.Bounds().Min))
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 		w, h = img.Bounds().Dx(), img.Bounds().Dy()
 	}
 	if horizontalFlip {
 		img = imaging.FlipH(img)
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 	}
 	if verticalFlip {
 		img = imaging.FlipV(img)
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 	}
 	angle := math.Mod(rotate, 360)
 	if angle < 0 {
@@ -410,6 +432,9 @@ func (*View) Call(in string) []provider.Part {
 			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"rotation exceeds size limits\"/>")}}
 		}
 		img = imaging.Rotate(img, angle, color.NRGBA{})
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 	}
 	sw := math.Max(1, math.Round(scale*float64(w)))
 	sh := math.Max(1, math.Round(scale*float64(h)))
@@ -423,34 +448,64 @@ func (*View) Call(in string) []provider.Part {
 	}
 	if tw != w || th != h {
 		img = imaging.Resize(img, tw, th, imaging.Lanczos)
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 	}
 	if grayscale {
 		img = imaging.Grayscale(img)
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 	}
 	if invert {
 		img = imaging.Invert(img)
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 	}
 	if brightness != 0 {
 		img = imaging.AdjustBrightness(img, brightness*100)
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 	}
 	if contrast != 0 {
 		img = imaging.AdjustContrast(img, contrast*100)
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 	}
 	if saturation != 0 {
 		img = imaging.AdjustSaturation(img, saturation*100)
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 	}
 	if gamma != 1 {
 		img = imaging.AdjustGamma(img, gamma)
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 	}
 	if blur != 0 {
 		img = imaging.Blur(img, blur)
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 	}
 	if sharpness != 0 {
 		img = imaging.Sharpen(img, sharpness)
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 	}
 	var body bytes.Buffer
 	if err := png.Encode(&body, img); err != nil {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "encode PNG: "+err.Error()))}}
+	}
+	if err := ctx.Err(); err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	return []provider.Part{
 		{ContentType: "text/plain", Content: []byte(out + " error=\"\">\n")},

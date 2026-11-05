@@ -2,6 +2,7 @@ package tool
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,8 +43,11 @@ func (*Edit) Schema() map[string]any {
 	}
 }
 
-func (*Edit) Call(in string) []provider.Part {
+func (*Edit) Call(ctx context.Context, in string) []provider.Part {
 	out := "<edit"
+	if err := ctx.Err(); err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+	}
 	if !utf8.ValidString(in) {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: invalid utf-8\"/>")}}
 	}
@@ -114,6 +118,9 @@ func (*Edit) Call(in string) []provider.Part {
 	keep, valid := 0, 0
 	size, match := int64(0), int64(-1)
 	for {
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 		n, err := io.ReadFull(file, buf[keep:keep+(1<<15)])
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err)))}}
@@ -149,6 +156,9 @@ func (*Edit) Call(in string) []provider.Part {
 		keep = min(total, max(len(old)-1, utf8.UTFMax-1))
 		valid = end - total + keep
 		copy(buf, buf[total-keep:total])
+	}
+	if err := ctx.Err(); err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	if match == -1 {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"old_text must occur exactly once in the file\"/>")}}

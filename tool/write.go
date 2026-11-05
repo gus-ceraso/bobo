@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,8 +39,11 @@ func (*Write) Schema() map[string]any {
 	}
 }
 
-func (*Write) Call(in string) []provider.Part {
+func (*Write) Call(ctx context.Context, in string) []provider.Part {
 	out := "<write"
+	if err := ctx.Err(); err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+	}
 	if !utf8.ValidString(in) {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: invalid utf-8\"/>")}}
 	}
@@ -69,6 +73,9 @@ func (*Write) Call(in string) []provider.Part {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: text is not a string\"/>")}}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("create parent directories for %s: %v", path, err)))}}
 	}
@@ -90,6 +97,9 @@ func (*Write) Call(in string) []provider.Part {
 	}
 	if !info.Mode().IsRegular() {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", path+" is not a regular file"))}}
+	}
+	if err := ctx.Err(); err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	if _, err := file.WriteString(text); err != nil {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("write %s: %v", path, err)))}}

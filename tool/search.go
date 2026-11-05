@@ -3,6 +3,7 @@ package tool
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,8 +64,11 @@ func (*Search) Schema() map[string]any {
 	}
 }
 
-func (*Search) Call(in string) []provider.Part {
+func (*Search) Call(ctx context.Context, in string) []provider.Part {
 	out := "<search"
+	if err := ctx.Err(); err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+	}
 	if !utf8.ValidString(in) {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: invalid utf-8\"/>")}}
 	}
@@ -183,6 +187,9 @@ func (*Search) Call(in string) []provider.Part {
 	remaining := limit
 	nextOffset := 0
 	err = fs.WalkDir(fsys, root, func(p string, d fs.DirEntry, err error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err != nil {
 			if !isDir {
 				return err
@@ -253,6 +260,9 @@ func (*Search) Call(in string) []provider.Part {
 		i := int64(0)
 		discard := false
 		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			line, err := reader.ReadSlice('\n')
 			if errors.Is(err, bufio.ErrBufferFull) {
 				discard = true

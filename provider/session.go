@@ -44,10 +44,10 @@ func NewSession(model, effort, instructions string, tools []Tool) *Session {
 }
 
 func (s *Session) PushEvent(ev Event) {
+	s.Events = append(s.Events, ev)
 	if s.OnEvent != nil {
 		s.OnEvent(ev)
 	}
-	s.Events = append(s.Events, ev)
 }
 
 func (s *Session) PopEvent() {
@@ -143,8 +143,9 @@ func (c *Client) Prompt(ctx context.Context, s *Session, prompt string) (string,
 }
 
 func (c *Client) Compact(ctx context.Context, s *Session) error {
-	s.PushEvent(CompactionTrigger{}.Event())
+	s.Events = append(s.Events, Event{body: map[string]any{"type": "compaction_trigger"}})
 	evs, _, err := c.Next(ctx, s)
+	s.Events = s.Events[:len(s.Events)-1]
 	s.PopEvent()
 	if err != nil {
 		return err

@@ -2,6 +2,7 @@ package tool
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,8 +51,11 @@ func (*Read) Schema() map[string]any {
 	}
 }
 
-func (*Read) Call(in string) []provider.Part {
+func (*Read) Call(ctx context.Context, in string) []provider.Part {
 	out := "<read"
+	if err := ctx.Err(); err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+	}
 	if !utf8.ValidString(in) {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: invalid utf-8\"/>")}}
 	}
@@ -141,6 +145,9 @@ func (*Read) Call(in string) []provider.Part {
 	reader := bufio.NewReaderSize(file, 1<<15)
 	nextOffset := 0
 	for i := 1; ; i++ {
+		if err := ctx.Err(); err != nil {
+			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+		}
 		if len(body) == 1<<15 || (i >= offset && i-offset >= limit) {
 			if _, err := reader.Peek(1); err == nil {
 				nextOffset = i

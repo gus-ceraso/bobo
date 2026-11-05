@@ -21,19 +21,17 @@ func (*Shell) Schema() map[string]any {
 	return map[string]any{
 		"type":        "custom",
 		"name":        "shell",
-		"description": "Run a POSIX sh script in a fresh shell. Returns the last 32KiB of combined stdout and stderr. Invalid UTF-8 is replaced with �. Times out after 5 minutes.",
+		"description": "Run a POSIX sh script in a fresh shell. Returns the last 32KiB of combined stdout and stderr. Invalid UTF-8 is replaced with �.",
 	}
 }
 
-func (*Shell) Call(in string) []provider.Part {
+func (*Shell) Call(ctx context.Context, in string) []provider.Part {
 	if !utf8.ValidString(in) {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte("<shell exit_code=\"-1\" truncated=\"false\" error=\"invalid arguments: invalid utf-8\"/>")}}
 	}
 	if strings.IndexByte(in, 0) >= 0 {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte("<shell exit_code=\"-1\" truncated=\"false\" error=\"invalid arguments: script contains a null byte\"/>")}}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", in)
 	cmd.WaitDelay = 5 * time.Second
 	reader, writer := io.Pipe()
@@ -68,9 +66,12 @@ func (*Shell) Call(in string) []provider.Part {
 		exitCode = cmd.ProcessState.ExitCode()
 	}
 	message := ""
-	if ctx.Err() != nil {
-		exitCode = 124
-		message = "timed out after 5m"
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		exitCode = -1
+		if ctxErr == context.DeadlineExceeded {
+			exitCode = 124
+		}
+		message = ctxErr.Error()
 	} else if err != nil {
 		message = err.Error()
 	}

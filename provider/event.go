@@ -86,19 +86,6 @@ func (e Event) Compaction() *Compaction {
 	return &Compaction{}
 }
 
-type CompactionTrigger struct{}
-
-func (e Event) CompactionTrigger() *CompactionTrigger {
-	if t, _ := e.body["type"].(string); t != "compaction_trigger" {
-		return nil
-	}
-	return &CompactionTrigger{}
-}
-
-func (CompactionTrigger) Event() Event {
-	return Event{body: map[string]any{"type": "compaction_trigger"}}
-}
-
 type FunctionCall struct {
 	ID        string
 	Name      string
