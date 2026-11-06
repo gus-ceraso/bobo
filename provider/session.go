@@ -8,13 +8,27 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"math/rand/v2"
+	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
 	"ceraso.dev/bobo/omap"
+)
+
+var (
+	ErrQuotaExceeded         = errors.New("API quota exceeded")
+	ErrUsageLimitReached     = errors.New("account usage limit reached")
+	ErrAuthentication        = errors.New("authentication failed")
+	ErrPermissionDenied      = errors.New("permission denied")
+	ErrInvalidRequest        = errors.New("invalid request")
+	ErrContextLengthExceeded = errors.New("context length exceeded")
+	ErrResponseIncomplete    = errors.New("response incomplete")
 )
 
 type Tool interface {
@@ -232,98 +246,262 @@ func (c *Client) Next(ctx context.Context, s *Session) ([]Event, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encoding request object: %w", err)
 	}
-	var resObj struct {
-		Output []map[string]any `json:"output"`
+	type responseError struct {
+		Code    string            `json:"code"`
+		Type    string            `json:"type"`
+		Headers map[string]string `json:"headers"`
 	}
-
-	token, err := c.Token(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting client access token: %w", err)
+	delay := 500 * time.Millisecond
+	var retryAt time.Time
+RETRY:
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+"/responses", bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("constructing HTTP request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	res, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("doing request: %w", err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		resBody, err := io.ReadAll(res.Body)
+	retryAt = time.Time{}
+	{
+		token, err := c.Token(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("reading response error body (%s): %w", res.Status, err)
+			return nil, fmt.Errorf("getting client access token: %w", err)
 		}
-		return nil, fmt.Errorf("creating response: %s: %s", res.Status, resBody)
-	}
-
-	reader := bufio.NewReader(res.Body)
-	var data []byte
-SSE_LOOP:
-	for {
-		line, err := reader.ReadString('\n')
+		req, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+"/responses", bytes.NewReader(reqBody))
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil, fmt.Errorf("response stream ended before completion: %w", io.ErrUnexpectedEOF)
-			}
-			return nil, fmt.Errorf("reading response stream: %w", err)
+			return nil, fmt.Errorf("constructing HTTP request: %w", err)
 		}
-		line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		if strings.HasPrefix(line, "data:") {
-			data = append(data, strings.TrimPrefix(line[len("data:"):], " ")...)
-			data = append(data, '\n')
-			continue
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+		res, err := c.HTTPClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("doing request: %w", err)
 		}
-		if line != "" || len(data) == 0 {
-			continue
+		status := res.StatusCode
+		headers := res.Header.Clone()
+		receivedAt := time.Now()
+		var failure responseError
+		var diagnostic string
+		retryable := status == 408 || status == 409 || status == 429 || status >= 500
+		if status != 200 {
+			body, readErr := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+			diagnostic = fmt.Sprintf("creating response: %s: %s", res.Status, body)
+			if readErr != nil {
+				diagnostic += fmt.Sprintf(" (reading body: %v)", readErr)
+			}
+			var envelope struct {
+				Error responseError `json:"error"`
+			}
+			json.Unmarshal(body, &envelope)
+			failure = envelope.Error
+			goto FAILED
 		}
-
-		var event struct {
-			Type     string          `json:"type"`
-			Response json.RawMessage `json:"response"`
-			Code     string          `json:"code"`
-			Message  string          `json:"message"`
+		{
+			mediaType, _, err := mime.ParseMediaType(res.Header.Get("Content-Type"))
+			if err != nil || mediaType != "text/event-stream" {
+				res.Body.Close()
+				return nil, fmt.Errorf("unexpected response Content-Type: %q", res.Header.Get("Content-Type"))
+			}
+			scanner := bufio.NewScanner(res.Body)
+			scanner.Buffer(make([]byte, 4096), 16<<20)
+			var data []byte
+			for scanner.Scan() {
+				line := scanner.Bytes()
+				if bytes.HasPrefix(line, []byte("data:")) {
+					if len(data)+len(line) > 16<<20 {
+						res.Body.Close()
+						return nil, errors.New("response event exceeds 16 MiB")
+					}
+					data = append(data, bytes.TrimPrefix(line[len("data:"):], []byte(" "))...)
+					data = append(data, '\n')
+					continue
+				}
+				if len(line) != 0 || len(data) == 0 {
+					continue
+				}
+				var eventType struct {
+					Type string `json:"type"`
+				}
+				if err := json.Unmarshal(data, &eventType); err != nil {
+					res.Body.Close()
+					return nil, fmt.Errorf("decoding response event: %w", err)
+				}
+				switch eventType.Type {
+				case "response.completed", "response.incomplete", "response.failed", "error":
+				default:
+					data = data[:0]
+					continue
+				}
+				var event struct {
+					Type     string         `json:"type"`
+					Code     string         `json:"code"`
+					Error    *responseError `json:"error"`
+					Response *struct {
+						ID                string           `json:"id"`
+						Status            string           `json:"status"`
+						Output            []map[string]any `json:"output"`
+						Error             *responseError   `json:"error"`
+						IncompleteDetails struct {
+							Reason string `json:"reason"`
+						} `json:"incomplete_details"`
+					} `json:"response"`
+				}
+				if err := json.Unmarshal(data, &event); err != nil {
+					res.Body.Close()
+					return nil, fmt.Errorf("decoding response event: %w", err)
+				}
+				switch event.Type {
+				case "response.completed":
+					res.Body.Close()
+					if event.Response == nil || event.Response.ID == "" || event.Response.Status != "completed" || event.Response.Error != nil || event.Response.Output == nil {
+						return nil, errors.New("invalid completed response")
+					}
+					var events []Event
+					for _, output := range event.Response.Output {
+						events = append(events, Event{body: output})
+					}
+					return events, nil
+				case "response.incomplete":
+					res.Body.Close()
+					if event.Response == nil {
+						return nil, fmt.Errorf("%w: missing response", ErrResponseIncomplete)
+					}
+					return nil, fmt.Errorf("%w: %s", ErrResponseIncomplete, event.Response.IncompleteDetails.Reason)
+				case "response.failed", "error":
+					failure.Code = event.Code
+					if event.Error != nil {
+						failure = *event.Error
+					}
+					if event.Response != nil && event.Response.Error != nil {
+						failure = *event.Response.Error
+					}
+					diagnostic = fmt.Sprintf("response stream failure: %s", data[:min(len(data), 1<<20)])
+					status = 0
+					receivedAt = time.Now()
+					goto FAILED
+				}
+				data = data[:0]
+			}
+			res.Body.Close()
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if err := scanner.Err(); err != nil {
+				return nil, fmt.Errorf("reading response stream: %w", err)
+			}
+			return nil, fmt.Errorf("response stream ended before completion: %w", io.ErrUnexpectedEOF)
 		}
-		if err := json.Unmarshal(data, &event); err != nil {
-			return nil, fmt.Errorf("decoding response event: %w", err)
+	FAILED:
+		res.Body.Close()
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		data = data[:0]
-
-		switch event.Type {
-		case "response.completed":
-			if err := json.Unmarshal(event.Response, &resObj); err != nil {
-				return nil, fmt.Errorf("decoding completed response: %w", err)
+		var kind error
+		switch status {
+		case 400, 404, 405, 413, 415, 422, 431:
+			kind = ErrInvalidRequest
+		case 401:
+			kind = ErrAuthentication
+		case 403:
+			kind = ErrPermissionDenied
+		}
+		code := failure.Code
+	CLASSIFY:
+		switch code {
+		case "insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted",
+			"organization_spend_limit_exceeded", "project_spend_limit_exceeded", "organization_usage_limit_exceeded":
+			kind = ErrQuotaExceeded
+		case "usage_limit_reached", "subscription_sharing_usage_limit_exceeded":
+			kind = ErrUsageLimitReached
+		case "authentication_error", "invalid_api_key", "invalid_authentication", "invalid_token",
+			"token_expired", "subscription_sharing_invalid_user":
+			kind = ErrAuthentication
+		case "permission_error", "permission_denied", "insufficient_permissions", "policy_error", "usage_not_included",
+			"subscription_sharing_user_not_eligible", "subscription_sharing_route_not_supported",
+			"chatpass_v2_scope_not_authorized", "chatpass_v2_invalid_authorization_context",
+			"bio_policy", "cyber_policy", "misalignment_policy_violation",
+			"image_content_policy_violation", "content_policy_violation":
+			kind = ErrPermissionDenied
+		case "context_length_exceeded":
+			kind = ErrContextLengthExceeded
+		case "invalid_request_error", "invalid_prompt", "data_residency_mismatch", "model_not_found",
+			"subscription_sharing_unsupported_capability", "invalid_image", "invalid_image_format",
+			"invalid_base64_image", "invalid_image_url", "image_too_large", "image_too_small",
+			"image_parse_error", "invalid_image_mode", "image_file_too_large", "unsupported_image_media_type",
+			"empty_image_file", "image_file_not_found", "audio_too_large", "audio_too_short",
+			"invalid_audio", "invalid_audio_data", "invalid_audio_format", "missing_audio_sample_rate":
+			kind = ErrInvalidRequest
+		case "server_error", "rate_limit_exceeded", "rate_limit_error", "service_unavailable_error", "slow_down",
+			"server_is_overloaded", "vector_store_timeout", "policy_capacity_unavailable", "flex_unavailable",
+			"subscription_sharing_usage_unavailable", "subscription_sharing_user_unavailable":
+			retryable = true
+			if failure.Type == "policy_error" {
+				break
 			}
-			break SSE_LOOP
-		case "response.failed", "response.incomplete":
-			var failure struct {
-				Error struct {
-					Code    string `json:"code"`
-					Message string `json:"message"`
-				} `json:"error"`
-				IncompleteDetails struct {
-					Reason string `json:"reason"`
-				} `json:"incomplete_details"`
+			fallthrough
+		default:
+			if code != failure.Type {
+				code = failure.Type
+				goto CLASSIFY
 			}
-			if err := json.Unmarshal(event.Response, &failure); err != nil {
-				return nil, fmt.Errorf("decoding failed response: %w", err)
+		}
+		if kind != nil {
+			return nil, fmt.Errorf("%w: %s", kind, diagnostic)
+		}
+		for name, value := range failure.Headers {
+			headers.Add(name, value)
+		}
+		for _, value := range headers.Values("X-Should-Retry") {
+			if value == "false" {
+				return nil, errors.New(diagnostic)
 			}
-			if event.Type == "response.incomplete" {
-				return nil, fmt.Errorf("response incomplete: %s", failure.IncompleteDetails.Reason)
+			if value == "true" {
+				retryable = true
 			}
-			return nil, fmt.Errorf("response failed: %s: %s", failure.Error.Code, failure.Error.Message)
-		case "error":
-			return nil, fmt.Errorf("response stream error: %s: %s", event.Code, event.Message)
+		}
+		for _, value := range headers.Values("Retry-After-Ms") {
+			n, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			if n >= 0 && ((err == nil && !math.IsInf(n, 0)) || errors.Is(err, strconv.ErrRange)) {
+				wait := time.Duration(1<<63 - 1)
+				nanoseconds := n * float64(time.Millisecond)
+				if nanoseconds < float64(wait) {
+					wait = time.Duration(nanoseconds)
+				}
+				if candidate := receivedAt.Add(wait); candidate.After(retryAt) {
+					retryAt = candidate
+				}
+			}
+		}
+		if retryAt.IsZero() {
+			for _, value := range headers.Values("Retry-After") {
+				value = strings.TrimSpace(value)
+				n, err := strconv.ParseFloat(value, 64)
+				if n >= 0 && ((err == nil && !math.IsInf(n, 0)) || errors.Is(err, strconv.ErrRange)) {
+					wait := time.Duration(1<<63 - 1)
+					nanoseconds := n * float64(time.Second)
+					if nanoseconds < float64(wait) {
+						wait = time.Duration(nanoseconds)
+					}
+					if candidate := receivedAt.Add(wait); candidate.After(retryAt) {
+						retryAt = candidate
+					}
+				} else if date, err := http.ParseTime(value); err == nil && date.After(retryAt) {
+					retryAt = date
+				}
+			}
+		}
+		if !retryable && retryAt.IsZero() {
+			return nil, errors.New(diagnostic)
 		}
 	}
-
-	var events []Event
-	for _, output := range resObj.Output {
-		events = append(events, Event{body: output})
+	{
+		wait := time.Duration(float64(delay) * (0.75 + rand.Float64()/4))
+		wait = max(wait, time.Until(retryAt))
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+		delay = min(delay*2, 30*time.Second)
 	}
-	return events, nil
+	goto RETRY
 }
