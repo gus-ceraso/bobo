@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"log"
 	"net/http"
 )
 
@@ -9,6 +10,7 @@ type Client struct {
 	Token      func(context.Context) (string, error)
 	BaseURL    string
 	HTTPClient *http.Client
+	Logger     *log.Logger
 }
 
 func NewClient(token func(context.Context) (string, error)) *Client {

@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
+	crand "crypto/rand"
+	jsonv1 "encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -12,13 +14,12 @@ import (
 	"math/rand/v2"
 	"mime"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
-
-	"ceraso.dev/bobo/omap"
 )
 
 var (
@@ -31,175 +32,123 @@ var (
 	ErrResponseIncomplete    = errors.New("response incomplete")
 )
 
-type Tool interface {
+type Function interface {
 	Schema() map[string]any
-	Call(context.Context, string) []Part
-}
-
-type ToolEntry struct {
-	Type   string
-	Name   string
-	Schema map[string]any
-	Call   func(context.Context, string) []Part
-}
-
-func HandleCalls(ctx context.Context, tools omap.Map[string, ToolEntry], inputEvents []Event) []Event {
-	type callU struct {
-		f *FunctionCall
-		t *ToolCall
-	}
-	var calls omap.Map[string, callU]
-	for _, ev := range inputEvents {
-		if functionCall := ev.FunctionCall(); functionCall != nil {
-			calls.Set(functionCall.ID, callU{f: functionCall})
-		} else if functionCallOutput := ev.FunctionCallOutput(); functionCallOutput != nil {
-			calls.Delete(functionCallOutput.ID)
-		} else if toolCall := ev.ToolCall(); toolCall != nil {
-			calls.Set(toolCall.ID, callU{t: toolCall})
-		} else if toolCallOutput := ev.ToolCallOutput(); toolCallOutput != nil {
-			calls.Delete(toolCallOutput.ID)
-		}
-	}
-
-	outputEvents := make([]Event, calls.Len())
-	i := 0
-	var wg sync.WaitGroup
-	for _, call := range calls.All() {
-		index := i
-		if call.f != nil {
-			if tool, ok := tools.Get(call.f.Name); ok && tool.Type == "function" {
-				wg.Go(func() {
-					parts := tool.Call(ctx, call.f.Arguments)
-					outputEvents[index] = FunctionCallOutput{ID: call.f.ID, Output: parts}.Event()
-				})
-			} else {
-				outputEvents[index] = FunctionCallOutput{ID: call.f.ID, Output: []Part{{"text/plain", []byte(fmt.Sprintf("error: function '%s' not found", call.f.Name))}}}.Event()
-			}
-		} else if call.t != nil {
-			if tool, ok := tools.Get(call.t.Name); ok && tool.Type == "custom" {
-				wg.Go(func() {
-					parts := tool.Call(ctx, call.t.Input)
-					outputEvents[index] = ToolCallOutput{ID: call.t.ID, Output: parts}.Event()
-				})
-			} else {
-				outputEvents[index] = ToolCallOutput{ID: call.t.ID, Output: []Part{{"text/plain", []byte(fmt.Sprintf("error: custom tool '%s' not found", call.t.Name))}}}.Event()
-			}
-		}
-		i++
-	}
-	wg.Wait()
-	return outputEvents
+	Call(context.Context, map[string]any) []Part
 }
 
 type Session struct {
+	ID               string
 	Model            string
 	Effort           string
 	Instructions     string
 	CompactThreshold int
 	ServiceTier      string
-	Tools            omap.Map[string, ToolEntry]
-	Events           []Event
-	OnEvent          func(Event) error
+	Functions        []Function
+	Events           []map[string]any
 }
 
-func NewSession(model, effort, instructions string, tools []Tool) *Session {
-	var toolsMap omap.Map[string, ToolEntry]
-	for _, tool := range tools {
-		toolSchema := tool.Schema()
-		toolType, _ := toolSchema["type"].(string)
-		toolName, _ := toolSchema["name"].(string)
-		toolsMap.Set(toolName, ToolEntry{Type: toolType, Name: toolName, Schema: toolSchema, Call: tool.Call})
-	}
+func NewSession(model, effort, instructions string, functions []Function) *Session {
 	return &Session{
+		ID:               crand.Text(),
 		Model:            model,
 		Effort:           effort,
 		Instructions:     instructions,
 		CompactThreshold: 128000,
 		ServiceTier:      "auto",
-		Tools:            toolsMap,
+		Functions:        slices.Clone(functions),
 	}
-}
-
-func (s *Session) AppendEvent(ev Event) error {
-	if s.OnEvent != nil {
-		if err := s.OnEvent(ev); err != nil {
-			return err
-		}
-	}
-	s.Events = append(s.Events, ev)
-	return nil
 }
 
 func (c *Client) Prompt(ctx context.Context, s *Session, prompt string) (string, error) {
 	if !utf8.ValidString(prompt) {
 		return "", errors.New("prompt has invalid utf-8")
 	}
-	for _, ev := range HandleCalls(ctx, s.Tools, s.Events) {
-		if err := s.AppendEvent(ev); err != nil {
-			return "", err
-		}
-	}
-	if err := s.AppendEvent(Message{Role: "user", Content: []Part{{"text/plain", []byte(prompt)}}}.Event()); err != nil {
-		return "", err
-	}
+	c.appendEvent(s, map[string]any{"type": "message", "role": "user", "content": prompt})
+
 	for {
-		inputEvents, err := c.Next(ctx, s)
+		inputEvents, err := c.responses(ctx, s)
 		if err != nil {
 			return "", err
 		}
-		last := true
-		var lastMessage *Message
-		for _, ev := range inputEvents {
-			if err := s.AppendEvent(ev); err != nil {
-				return "", err
-			}
-			if f := ev.FunctionCall(); f != nil {
-				last = false
-			} else if t := ev.ToolCall(); t != nil {
-				last = false
-			} else if m := ev.Message(); m != nil && m.Phase != "commentary" {
-				lastMessage = m
+		c.appendEvent(s, inputEvents...)
+
+		var functionCalls []map[string]any
+		var lastMessage map[string]any
+		for _, e := range inputEvents {
+			if t, _ := e["type"].(string); t == "function_call" {
+				functionCalls = append(functionCalls, e)
+			} else if t == "message" {
+				if phase, _ := e["phase"].(string); phase != "commentary" {
+					lastMessage = e
+				}
 			}
 		}
-		if last {
-			if lastMessage != nil {
-				var textParts []string
-				for _, part := range lastMessage.Content {
-					if part.ContentType == "text/plain" {
-						textParts = append(textParts, string(part.Content))
-					}
+		if len(functionCalls) == 0 {
+			var textParts []string
+			for _, part := range decodeParts(lastMessage["content"]) {
+				if part.ContentType == "text/plain" {
+					textParts = append(textParts, string(part.Content))
 				}
-				return strings.Join(textParts, "\n\n"), nil
 			}
-			return "", nil
+			return strings.Join(textParts, "\n\n"), nil
 		}
 		turnCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		defer cancel()
-		outputEvents := HandleCalls(turnCtx, s.Tools, inputEvents)
-		for _, ev := range outputEvents {
-			if err := s.AppendEvent(ev); err != nil {
-				return "", err
+		outputEvents := make([]map[string]any, len(functionCalls))
+		var wg sync.WaitGroup
+		for index, e := range functionCalls {
+			callID, _ := e["call_id"].(string)
+			name, _ := e["name"].(string)
+			arguments, _ := e["arguments"].(string)
+			outputEvents[index] = map[string]any{
+				"type":    "function_call_output",
+				"call_id": callID,
+			}
+			args, err := decodeArguments(arguments)
+			if err != nil {
+				outputEvents[index]["output"] = fmt.Sprintf("invalid arguments: %s", err)
+				continue
+			}
+			found := false
+			for _, f := range s.Functions {
+				if fName, _ := f.Schema()["name"].(string); fName == name {
+					wg.Go(func() {
+						outputEvents[index]["output"] = encodeParts(f.Call(turnCtx, args))
+					})
+					found = true
+					break
+				}
+			}
+			if !found {
+				outputEvents[index]["output"] = fmt.Sprintf("function %q not found", name)
 			}
 		}
+		wg.Wait()
+		cancel()
+		c.appendEvent(s, outputEvents...)
 	}
 }
 
-func (c *Client) Compact(ctx context.Context, s *Session) error {
-	s.Events = append(s.Events, Event{body: map[string]any{"type": "compaction_trigger"}})
-	evs, err := c.Next(ctx, s)
-	s.Events = s.Events[:len(s.Events)-1]
-	if err != nil {
-		return err
+func decodeArguments(arguments string) (map[string]any, error) {
+	// Retain v2's strict validation of a single JSON value, duplicate names,
+	// and Unicode before using the v1 decoder for its UseNumber support.
+	var raw jsonv1.RawMessage
+	if err := json.Unmarshal([]byte(arguments), &raw); err != nil {
+		return nil, err
 	}
-	for _, ev := range evs {
-		if err := s.AppendEvent(ev); err != nil {
-			return err
-		}
+	dec := jsonv1.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var args map[string]any
+	if err := dec.Decode(&args); err != nil {
+		return nil, err
 	}
-	return nil
+	if args == nil {
+		return nil, errors.New("expected a JSON object")
+	}
+	return args, nil
 }
 
-func (c *Client) Next(ctx context.Context, s *Session) ([]Event, error) {
+func (c *Client) responses(ctx context.Context, s *Session) ([]map[string]any, error) {
 	reqObj := map[string]any{
 		"instructions": s.Instructions,
 		"model":        s.Model,
@@ -216,14 +165,14 @@ func (c *Client) Next(ctx context.Context, s *Session) ([]Event, error) {
 		"stream":       true,
 	}
 	tools := []map[string]any{}
-	for _, t := range s.Tools.All() {
-		tools = append(tools, t.Schema)
+	for _, f := range s.Functions {
+		tools = append(tools, f.Schema())
 	}
 	reqObj["tools"] = []map[string]any{
 		{
 			"type":        "namespace",
-			"name":        "main",
-			"description": "Main tools.",
+			"name":        "default",
+			"description": "Default",
 			"tools":       tools,
 		},
 		{
@@ -232,16 +181,12 @@ func (c *Client) Next(ctx context.Context, s *Session) ([]Event, error) {
 	}
 	startIndex := 0
 	for i := len(s.Events) - 1; i >= 0; i-- {
-		if c := s.Events[i].Compaction(); c != nil {
+		if t, _ := s.Events[i]["type"].(string); t == "compaction" {
 			startIndex = i
 			break
 		}
 	}
-	input := make([]map[string]any, len(s.Events)-startIndex)
-	for i := startIndex; i < len(s.Events); i++ {
-		input[i-startIndex] = s.Events[i].body
-	}
-	reqObj["input"] = input
+	reqObj["input"] = s.Events[startIndex:]
 	reqBody, err := json.Marshal(reqObj)
 	if err != nil {
 		return nil, fmt.Errorf("encoding request object: %w", err)
@@ -251,6 +196,7 @@ func (c *Client) Next(ctx context.Context, s *Session) ([]Event, error) {
 		Type    string            `json:"type"`
 		Headers map[string]string `json:"headers"`
 	}
+
 	delay := 500 * time.Millisecond
 	var retryAt time.Time
 RETRY:
@@ -289,8 +235,9 @@ RETRY:
 			var envelope struct {
 				Error responseError `json:"error"`
 			}
-			json.Unmarshal(body, &envelope)
-			failure = envelope.Error
+			if err := json.Unmarshal(body, &envelope); err == nil {
+				failure = envelope.Error
+			}
 			goto FAILED
 		}
 		{
@@ -353,11 +300,7 @@ RETRY:
 					if event.Response == nil || event.Response.ID == "" || event.Response.Status != "completed" || event.Response.Error != nil || event.Response.Output == nil {
 						return nil, errors.New("invalid completed response")
 					}
-					var events []Event
-					for _, output := range event.Response.Output {
-						events = append(events, Event{body: output})
-					}
-					return events, nil
+					return event.Response.Output, nil
 				case "response.incomplete":
 					res.Body.Close()
 					if event.Response == nil {
@@ -377,7 +320,6 @@ RETRY:
 					receivedAt = time.Now()
 					goto FAILED
 				}
-				data = data[:0]
 			}
 			res.Body.Close()
 			if err := ctx.Err(); err != nil {
@@ -504,4 +446,15 @@ RETRY:
 		delay = min(delay*2, 30*time.Second)
 	}
 	goto RETRY
+}
+
+func (c *Client) appendEvent(s *Session, es ...map[string]any) {
+	for _, e := range es {
+		s.Events = append(s.Events, e)
+		if c.Logger != nil {
+			if b, err := json.Marshal(e); err == nil {
+				c.Logger.Printf("session=%s model=%q service_tier=%q event=%q\n", s.ID, s.Model, s.ServiceTier, string(b))
+			}
+		}
+	}
 }

@@ -1,4 +1,4 @@
-package tool
+package function
 
 import (
 	"bytes"
@@ -12,15 +12,17 @@ import (
 	"math"
 	"net/http"
 	"os"
-	"strings"
-	"unicode/utf8"
+	"syscall"
+	"time"
 
 	"ceraso.dev/bobo/provider"
 	"github.com/disintegration/imaging"
 	_ "golang.org/x/image/webp"
 )
 
-type View struct{}
+type View struct {
+	locks *fileLocks
+}
 
 func (*View) Schema() map[string]any {
 	return map[string]any{
@@ -113,191 +115,66 @@ func (*View) Schema() map[string]any {
 	}
 }
 
-func (*View) Call(ctx context.Context, in string) []provider.Part {
-	out := "<view"
+func (v *View) Call(ctx context.Context, args map[string]any) []provider.Part {
+	out := fmt.Sprintf("<view date=%q", time.Now().Format(time.RFC3339))
 	if err := ctx.Err(); err != nil {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	if !utf8.ValidString(in) {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: invalid utf-8\"/>")}}
-	}
-	dec := json.NewDecoder(strings.NewReader(in))
-	dec.UseNumber()
-	var args map[string]any
-	if err := dec.Decode(&args); err != nil {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "invalid arguments: "+err.Error()))}}
-	}
-	v, ok := args["path"]
-	if !ok {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: missing path\"/>")}}
-	}
-	path, ok := v.(string)
-	if !ok {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: path is not a string\"/>")}}
-	}
-	if path == "" {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: path is empty\"/>")}}
+	path, err := nonemptyStringArgument(args, "path")
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	out += fmt.Sprintf(" path=%q", path)
-	horizontalFlip := false
-	v, ok = args["horizontal_flip"]
-	if ok && v != nil {
-		horizontalFlip, ok = v.(bool)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: horizontal_flip is not a bool\"/>")}}
-		}
+	horizontalFlip, err := boolArgument(args, "horizontal_flip")
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	verticalFlip := false
-	v, ok = args["vertical_flip"]
-	if ok && v != nil {
-		verticalFlip, ok = v.(bool)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: vertical_flip is not a bool\"/>")}}
-		}
+	verticalFlip, err := boolArgument(args, "vertical_flip")
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	grayscale := false
-	v, ok = args["grayscale"]
-	if ok && v != nil {
-		grayscale, ok = v.(bool)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: grayscale is not a bool\"/>")}}
-		}
+	grayscale, err := boolArgument(args, "grayscale")
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	invert := false
-	v, ok = args["invert"]
-	if ok && v != nil {
-		invert, ok = v.(bool)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: invert is not a bool\"/>")}}
-		}
+	invert, err := boolArgument(args, "invert")
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	rotate := 0.0
-	v, ok = args["rotate"]
-	if ok && v != nil {
-		n, ok := v.(json.Number)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: rotate is not a number\"/>")}}
-		}
-		f, err := n.Float64()
-		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: rotate must be finite\"/>")}}
-		}
-		rotate = f
+	rotate, err := numberArgument(args, "rotate", 0)
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	scale := 1.0
-	v, ok = args["scale"]
-	if ok && v != nil {
-		n, ok := v.(json.Number)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: scale is not a number\"/>")}}
-		}
-		f, err := n.Float64()
-		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: scale must be finite\"/>")}}
-		}
-		if f <= 0 {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: scale must be greater than 0\"/>")}}
-		}
-		scale = f
+	scale, err := positiveNumberArgument(args, "scale", 1)
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	brightness := 0.0
-	v, ok = args["brightness"]
-	if ok && v != nil {
-		n, ok := v.(json.Number)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: brightness is not a number\"/>")}}
-		}
-		f, err := n.Float64()
-		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: brightness must be finite\"/>")}}
-		}
-		if f < -1 || f > 1 {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: brightness must be between -1 and 1\"/>")}}
-		}
-		brightness = f
+	brightness, err := boundedNumberArgument(args, "brightness", 0, -1, 1)
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	contrast := 0.0
-	v, ok = args["contrast"]
-	if ok && v != nil {
-		n, ok := v.(json.Number)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: contrast is not a number\"/>")}}
-		}
-		f, err := n.Float64()
-		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: contrast must be finite\"/>")}}
-		}
-		if f < -1 || f > 1 {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: contrast must be between -1 and 1\"/>")}}
-		}
-		contrast = f
+	contrast, err := boundedNumberArgument(args, "contrast", 0, -1, 1)
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	saturation := 0.0
-	v, ok = args["saturation"]
-	if ok && v != nil {
-		n, ok := v.(json.Number)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: saturation is not a number\"/>")}}
-		}
-		f, err := n.Float64()
-		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: saturation must be finite\"/>")}}
-		}
-		if f < -1 || f > 1 {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: saturation must be between -1 and 1\"/>")}}
-		}
-		saturation = f
+	saturation, err := boundedNumberArgument(args, "saturation", 0, -1, 1)
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	gamma := 1.0
-	v, ok = args["gamma"]
-	if ok && v != nil {
-		n, ok := v.(json.Number)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: gamma is not a number\"/>")}}
-		}
-		f, err := n.Float64()
-		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: gamma must be finite\"/>")}}
-		}
-		if f <= 0 {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: gamma must be greater than 0\"/>")}}
-		}
-		gamma = f
+	gamma, err := positiveNumberArgument(args, "gamma", 1)
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	blur := 0.0
-	v, ok = args["blur"]
-	if ok && v != nil {
-		n, ok := v.(json.Number)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: blur is not a number\"/>")}}
-		}
-		f, err := n.Float64()
-		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: blur must be finite\"/>")}}
-		}
-		if f < 0 || f > 10 {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: blur must be between 0 and 10\"/>")}}
-		}
-		blur = f
+	blur, err := boundedNumberArgument(args, "blur", 0, 0, 10)
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	sharpness := 0.0
-	v, ok = args["sharpness"]
-	if ok && v != nil {
-		n, ok := v.(json.Number)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: sharpness is not a number\"/>")}}
-		}
-		f, err := n.Float64()
-		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: sharpness must be finite\"/>")}}
-		}
-		if f < 0 || f > 10 {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: sharpness must be between 0 and 10\"/>")}}
-		}
-		sharpness = f
+	sharpness, err := boundedNumberArgument(args, "sharpness", 0, 0, 10)
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	var crop []float64
-	if v, ok := args["crop"]; ok && v != nil {
+	if v := args["crop"]; v != nil {
 		values, ok := v.([]any)
 		if !ok {
 			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: crop is not an array\"/>")}}
@@ -324,24 +201,20 @@ func (*View) Call(ctx context.Context, in string) []provider.Part {
 	if err := ctx.Err(); err != nil {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	info, err := os.Stat(path)
+	path, unlock, err := v.locks.acquire(ctx, path)
 	if err != nil {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err)))}}
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	if !info.Mode().IsRegular() {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", path+" is not a regular file"))}}
-	}
-	if info.Size() > 128<<20 {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"file exceeds 128 MiB\"/>")}}
-	}
-	file, err := os.Open(path)
+	defer unlock()
+
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("open %s: %v", path, err)))}}
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	defer file.Close()
-	info, err = file.Stat()
+	info, err := file.Stat()
 	if err != nil {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err)))}}
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	if !info.Mode().IsRegular() {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", path+" is not a regular file"))}}
@@ -349,39 +222,39 @@ func (*View) Call(ctx context.Context, in string) []provider.Part {
 	if info.Size() > 128<<20 {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"file exceeds 128 MiB\"/>")}}
 	}
+	reader := io.NewSectionReader(file, 0, 128<<20)
 	var header [512]byte
-	n, err := file.ReadAt(header[:], 0)
+	n, err := reader.ReadAt(header[:], 0)
 	if err != nil && err != io.EOF {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("read %s: %v", path, err)))}}
 	}
-	var img image.Image
 	switch http.DetectContentType(header[:n]) {
 	case "image/png", "image/jpeg", "image/webp":
-		config, _, err := image.DecodeConfig(file)
-		if err != nil {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "decode image header: "+err.Error()))}}
-		}
-		w, h := config.Width, config.Height
-		if w <= 0 || h <= 0 || w > 16384 || h > 16384 || int64(w)*int64(h) > 32_000_000 {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"image exceeds size limits\"/>")}}
-		}
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("seek %s: %v", path, err)))}}
-		}
-		if err := ctx.Err(); err != nil {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
-		}
-		img, err = imaging.Decode(file, imaging.AutoOrientation(true))
-		if err != nil {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "decode image: "+err.Error()))}}
-		}
 	default:
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"unsupported format; expected PNG, JPEG, or WebP\"/>")}}
+	}
+	config, _, err := image.DecodeConfig(reader)
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "decode image header: "+err.Error()))}}
+	}
+	w, h := config.Width, config.Height
+	if w <= 0 || h <= 0 || w > 16384 || h > 16384 || int64(w)*int64(h) > 32_000_000 {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"image exceeds size limits\"/>")}}
+	}
+	if _, err := reader.Seek(0, io.SeekStart); err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("seek %s: %v", path, err)))}}
 	}
 	if err := ctx.Err(); err != nil {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	w, h := img.Bounds().Dx(), img.Bounds().Dy()
+	img, err := imaging.Decode(reader, imaging.AutoOrientation(true))
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "decode image: "+err.Error()))}}
+	}
+	if err := ctx.Err(); err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+	}
+	w, h = img.Bounds().Dx(), img.Bounds().Dy()
 	if w <= 0 || h <= 0 || w > 16384 || h > 16384 || int64(w)*int64(h) > 32_000_000 {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"image exceeds size limits\"/>")}}
 	}

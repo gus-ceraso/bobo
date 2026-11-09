@@ -1,21 +1,22 @@
-package tool
+package function
 
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
-	"strings"
+	"syscall"
+	"time"
 	"unicode/utf8"
 
 	"ceraso.dev/bobo/provider"
 )
 
-type Read struct{}
+type Read struct {
+	locks *fileLocks
+}
 
 func (*Read) Schema() map[string]any {
 	return map[string]any{
@@ -51,91 +52,46 @@ func (*Read) Schema() map[string]any {
 	}
 }
 
-func (*Read) Call(ctx context.Context, in string) []provider.Part {
-	out := "<read"
+func (r *Read) Call(ctx context.Context, args map[string]any) []provider.Part {
+	out := fmt.Sprintf("<read date=%q", time.Now().Format(time.RFC3339))
 	if err := ctx.Err(); err != nil {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	if !utf8.ValidString(in) {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: invalid utf-8\"/>")}}
-	}
-	dec := json.NewDecoder(strings.NewReader(in))
-	dec.UseNumber()
-	var args map[string]any
-	if err := dec.Decode(&args); err != nil {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "invalid arguments: "+err.Error()))}}
-	}
-	v, ok := args["path"]
-	if !ok {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: missing path\"/>")}}
-	}
-	path, ok := v.(string)
-	if !ok {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: path is not a string\"/>")}}
-	}
-	if path == "" {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: path is empty\"/>")}}
+	path, err := nonemptyStringArgument(args, "path")
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	out += fmt.Sprintf(" path=%q", path)
-	showLineNumbers := false
-	v, ok = args["show_line_numbers"]
-	if ok && v != nil {
-		showLineNumbers, ok = v.(bool)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: show_line_numbers is not a bool\"/>")}}
-		}
+	showLineNumbers, err := boolArgument(args, "show_line_numbers")
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	out += fmt.Sprintf(" show_line_numbers=\"%t\"", showLineNumbers)
-	offset := 1
-	v, ok = args["offset"]
-	if ok && v != nil {
-		n, ok := v.(json.Number)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: offset is not an integer\"/>")}}
-		}
-		i, err := n.Int64()
-		if err != nil {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "invalid arguments: offset is not a valid integer: "+err.Error()))}}
-		}
-		if i < 1 || i > math.MaxInt {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: offset is out of range\"/>")}}
-		}
-		offset = int(i)
+	offset, err := positiveIntArgument(args, "offset", 1)
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	out += fmt.Sprintf(" offset=\"%d\"", offset)
-	limit := 1000
-	v, ok = args["limit"]
-	if ok && v != nil {
-		n, ok := v.(json.Number)
-		if !ok {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: limit is not an integer\"/>")}}
-		}
-		i, err := n.Int64()
-		if err != nil {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", "invalid arguments: limit is not a valid integer: "+err.Error()))}}
-		}
-		if i < 1 || i > math.MaxInt {
-			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " error=\"invalid arguments: limit is out of range\"/>")}}
-		}
-		limit = int(i)
+	limit, err := positiveIntArgument(args, "limit", 1000)
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	out += fmt.Sprintf(" limit=\"%d\"", limit)
 
-	info, err := os.Stat(path)
+	path, unlock, err := r.locks.acquire(ctx, path)
 	if err != nil {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err)))}}
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
-	if !info.Mode().IsRegular() {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", path+" is not a regular file"))}}
-	}
-	file, err := os.Open(path)
+	defer unlock()
+
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("open %s: %v", path, err)))}}
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	defer file.Close()
-	info, err = file.Stat()
+	info, err := file.Stat()
 	if err != nil {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("stat %s: %v", path, err)))}}
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
 	}
 	if !info.Mode().IsRegular() {
 		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", path+" is not a regular file"))}}
@@ -157,6 +113,12 @@ func (*Read) Call(ctx context.Context, in string) []provider.Part {
 			break
 		}
 		line, err := reader.ReadSlice('\n')
+		for i < offset && errors.Is(err, bufio.ErrBufferFull) {
+			if err := ctx.Err(); err != nil {
+				return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", err.Error()))}}
+			}
+			line, err = reader.ReadSlice('\n')
+		}
 		if errors.Is(err, bufio.ErrBufferFull) {
 			return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" error=%q/>", fmt.Sprintf("%s:%d exceeds the 32 KiB line limit", path, i)))}}
 		}

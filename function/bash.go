@@ -1,4 +1,4 @@
-package tool
+package function
 
 import (
 	"bytes"
@@ -13,24 +13,43 @@ import (
 	"ceraso.dev/bobo/provider"
 )
 
-type Shell struct{}
+type Bash struct{}
 
-func (*Shell) Schema() map[string]any {
+func (*Bash) Schema() map[string]any {
 	return map[string]any{
-		"type":        "custom",
-		"name":        "shell",
+		"type":        "function",
+		"name":        "bash",
 		"description": "Run a Bash script in a fresh shell. Returns the last 32KiB of combined stdout and stderr. Use background jobs for important or slow commands.",
+		"parameters": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"command": map[string]any{
+					"type":        "string",
+					"description": "Bash script to execute.",
+				},
+			},
+			"required":             []string{"command"},
+			"additionalProperties": false,
+		},
+		"strict": true,
 	}
 }
 
-func (*Shell) Call(ctx context.Context, in string) []provider.Part {
-	if !utf8.ValidString(in) {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte("<shell exit_code=\"-1\" truncated=\"false\" error=\"invalid arguments: invalid utf-8\"/>")}}
+func (*Bash) Call(ctx context.Context, args map[string]any) []provider.Part {
+	out := fmt.Sprintf("<bash date=%q", time.Now().Format(time.RFC3339))
+	command, err := stringArgument(args, "command")
+	if err != nil {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" exit_code=\"-1\" truncated=\"false\" error=%q/>", err.Error()))}}
 	}
-	if strings.IndexByte(in, 0) >= 0 {
-		return []provider.Part{{ContentType: "text/plain", Content: []byte("<shell exit_code=\"-1\" truncated=\"false\" error=\"invalid arguments: script contains a null byte\"/>")}}
+	preview := fmt.Sprintf("%.80s", command)
+	if len(preview) < len(command) {
+		preview += "..."
 	}
-	cmd := exec.CommandContext(ctx, "/bin/bash", "-c", in)
+	out += fmt.Sprintf(" command=%q", preview)
+	if strings.IndexByte(command, 0) >= 0 {
+		return []provider.Part{{ContentType: "text/plain", Content: []byte(out + " exit_code=\"-1\" truncated=\"false\" error=\"invalid arguments: script contains a null byte\"/>")}}
+	}
+	cmd := exec.CommandContext(ctx, "/bin/bash", "-c", command)
 	cmd.WaitDelay = 5 * time.Second
 	reader, writer := io.Pipe()
 	defer reader.Close()
@@ -50,7 +69,7 @@ func (*Shell) Call(ctx context.Context, in string) []provider.Part {
 			}
 		}
 	}()
-	err := cmd.Run()
+	err = cmd.Run()
 	writer.Close()
 	<-readDone
 	if size == len(body) {
@@ -80,7 +99,6 @@ func (*Shell) Call(ctx context.Context, in string) []provider.Part {
 	body = bytes.ToValidUTF8(body, []byte("\uFFFD"))
 	if len(body) > 1<<15 {
 		truncated = true
-		// Replacement can expand the output; keep a suffix at a rune boundary.
 		start := len(body) - (1 << 15)
 		for !utf8.RuneStart(body[start]) {
 			start++
@@ -91,5 +109,5 @@ func (*Shell) Call(ctx context.Context, in string) []provider.Part {
 	if len(text) > 0 && text[len(text)-1] != '\n' && len(text) < 1<<15 {
 		text += "\n"
 	}
-	return []provider.Part{{ContentType: "text/plain", Content: []byte(fmt.Sprintf("<shell exit_code=\"%d\" truncated=\"%t\" error=%q>\n%s</shell>", exitCode, truncated, message, text))}}
+	return []provider.Part{{ContentType: "text/plain", Content: []byte(out + fmt.Sprintf(" exit_code=\"%d\" truncated=\"%t\" error=%q>\n%s</bash>", exitCode, truncated, message, text))}}
 }
