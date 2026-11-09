@@ -1,3 +1,3 @@
 # bobo
 
-A simple and portable agent harness
+A simple agent harness

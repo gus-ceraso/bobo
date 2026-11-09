@@ -17,7 +17,7 @@ import (
 )
 
 func mockClient(fn testTransport) *Client {
-	c := NewClient(func(context.Context) (string, error) { return "token", nil })
+	c := NewClient(newMemoryStore(Credential{FallbackToken: "token"}))
 	c.HTTPClient = &http.Client{Transport: fn}
 	return c
 }
@@ -118,7 +118,9 @@ func TestResponsesSetupErrors(t *testing.T) {
 			return ctx
 		}, "", context.Canceled},
 		{"token", func(c *Client, _ *Session) context.Context {
-			c.Token = func(context.Context) (string, error) { return "", sentinel }
+			c.store = credentialStoreFuncs{load: func(context.Context) (Credential, error) {
+				return Credential{}, sentinel
+			}}
 			return context.Background()
 		}, "getting client access token", sentinel},
 		{"url", func(c *Client, _ *Session) context.Context {
@@ -471,7 +473,10 @@ func TestResponsesRetryBackoff(t *testing.T) {
 			return rawResponse(503, "application/json", "busy"), nil
 		})
 		tokens := 0
-		c.Token = func(context.Context) (string, error) { tokens++; return fmt.Sprint(tokens), nil }
+		c.store = credentialStoreFuncs{load: func(context.Context) (Credential, error) {
+			tokens++
+			return Credential{FallbackToken: fmt.Sprint(tokens)}, nil
+		}}
 		if _, err := c.responses(context.Background(), NewSession("model", "low", "", nil)); err != nil {
 			t.Fatal(err)
 		}

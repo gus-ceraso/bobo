@@ -8,6 +8,9 @@ import (
 	"strings"
 )
 
+// Part is a MIME-typed function result. Text is encoded as input_text, images as
+// input_image, and other content as input_file. Content is copied into requests;
+// callers must not mutate it concurrently with Prompt.
 type Part struct {
 	ContentType string
 	Content     []byte

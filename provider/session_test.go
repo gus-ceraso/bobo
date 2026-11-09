@@ -55,7 +55,7 @@ func TestPromptFunctionRoundTrip(t *testing.T) {
 		"type": "message", "role": "assistant",
 		"content": []any{map[string]any{"type": "output_text", "text": "done"}},
 	}}
-	c := NewClient(func(context.Context) (string, error) { return "token", nil })
+	c := NewClient(newMemoryStore(Credential{FallbackToken: "token"}))
 	requests := 0
 	c.HTTPClient = &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
 		requests++
@@ -116,7 +116,7 @@ func TestResponsesCompaction(t *testing.T) {
 		{"type": "message", "role": "user", "content": "new"},
 	}
 	output := []map[string]any{{"type": "message", "role": "assistant", "content": "answer"}}
-	c := NewClient(func(context.Context) (string, error) { return "token", nil })
+	c := NewClient(newMemoryStore(Credential{FallbackToken: "token"}))
 	c.HTTPClient = &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {

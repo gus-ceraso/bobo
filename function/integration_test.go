@@ -20,6 +20,16 @@ type functionTestTransport func(*http.Request) (*http.Response, error)
 
 func (f functionTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+type functionTestCredentialStore struct{}
+
+func (functionTestCredentialStore) Load(ctx context.Context) (provider.Credential, error) {
+	return provider.Credential{FallbackToken: "test-token"}, ctx.Err()
+}
+
+func (functionTestCredentialStore) Update(context.Context, func(provider.Credential) (provider.Credential, error)) (provider.Credential, error) {
+	return provider.Credential{}, fmt.Errorf("unexpected credential update")
+}
+
 func completedFunctionResponse(t testing.TB, output []map[string]any) *http.Response {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
@@ -86,7 +96,7 @@ func TestProviderSessionWithRealFunctions(t *testing.T) {
 	text := strings.Repeat("世", 81) + "\nanchor\n"
 	started := time.Now()
 	requests := 0
-	client := provider.NewClient(func(context.Context) (string, error) { return "test-token", nil })
+	client := provider.NewClient(functionTestCredentialStore{})
 	client.HTTPClient = &http.Client{Transport: functionTestTransport(func(req *http.Request) (*http.Response, error) {
 		if req.URL.Host != "api.openai.com" || req.Header.Get("Authorization") != "Bearer test-token" {
 			t.Fatalf("unexpected request: %v", req)

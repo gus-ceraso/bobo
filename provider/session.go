@@ -22,6 +22,8 @@ import (
 	"unicode/utf8"
 )
 
+// Terminal API failures returned by Prompt support errors.Is. Usage-limit
+// failures may be handled internally when a fallback token is available.
 var (
 	ErrQuotaExceeded         = errors.New("API quota exceeded")
 	ErrUsageLimitReached     = errors.New("account usage limit reached")
@@ -32,22 +34,29 @@ var (
 	ErrResponseIncomplete    = errors.New("response incomplete")
 )
 
+// Function exposes a strict Responses API function schema and its implementation.
+// Call must honor cancellation. Functions in one response execute concurrently;
+// implementations must synchronize shared resources and enforce their own policy.
 type Function interface {
 	Schema() map[string]any
 	Call(context.Context, map[string]any) []Part
 }
 
+// Session holds conversation settings and native Responses API events. Use one
+// Prompt call at a time per session. The caller owns session persistence.
 type Session struct {
-	ID               string
-	Model            string
-	Effort           string
-	Instructions     string
-	CompactThreshold int
-	ServiceTier      string
-	Functions        []Function
-	Events           []map[string]any
+	ID               string           // Local identifier used in logs.
+	Model            string           // Responses API model name.
+	Effort           string           // Model reasoning effort.
+	Instructions     string           // Instructions sent on every request.
+	CompactThreshold int              // Native compaction token threshold.
+	ServiceTier      string           // Requested API service tier.
+	Functions        []Function       // Locally executed functions.
+	Events           []map[string]any // Full history, including native opaque events.
 }
 
+// NewSession creates a session with a new ID, a cloned function slice, a 128000
+// token compaction threshold, and the "auto" service tier. It performs no I/O.
 func NewSession(model, effort, instructions string, functions []Function) *Session {
 	return &Session{
 		ID:               crand.Text(),
@@ -60,6 +69,15 @@ func NewSession(model, effort, instructions string, functions []Function) *Sessi
 	}
 }
 
+// Prompt appends a user message and runs the response/function loop to completion.
+// It returns text from the last non-commentary assistant message, excluding
+// reasoning and intermediate function output. Function batches have a 30-minute
+// timeout; ctx governs the entire operation, including authentication and retries.
+//
+// On error, the user message and any completed events remain in the session.
+// Calling Prompt again appends another message; it does not retry the failed turn.
+// Authentication fallback instead retries the current request internally, retaining
+// completed function outputs so those functions are not executed again.
 func (c *Client) Prompt(ctx context.Context, s *Session, prompt string) (string, error) {
 	if !utf8.ValidString(prompt) {
 		return "", errors.New("prompt has invalid utf-8")
@@ -93,7 +111,7 @@ func (c *Client) Prompt(ctx context.Context, s *Session, prompt string) (string,
 			}
 			return strings.Join(textParts, "\n\n"), nil
 		}
-		turnCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		turnCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 		outputEvents := make([]map[string]any, len(functionCalls))
 		var wg sync.WaitGroup
 		for index, e := range functionCalls {
@@ -205,7 +223,7 @@ RETRY:
 	}
 	retryAt = time.Time{}
 	{
-		token, err := c.Token(ctx)
+		auth, err := c.accessToken(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("getting client access token: %w", err)
 		}
@@ -213,7 +231,7 @@ RETRY:
 		if err != nil {
 			return nil, fmt.Errorf("constructing HTTP request: %w", err)
 		}
-		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Authorization", "Bearer "+auth.token)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "text/event-stream")
 		res, err := c.HTTPClient.Do(req)
@@ -382,6 +400,15 @@ RETRY:
 			if code != failure.Type {
 				code = failure.Type
 				goto CLASSIFY
+			}
+		}
+		if kind == ErrUsageLimitReached {
+			retry, err := c.usageFallback(ctx, auth)
+			if err != nil {
+				return nil, fmt.Errorf("selecting fallback credential: %w", err)
+			}
+			if retry {
+				goto RETRY
 			}
 		}
 		if kind != nil {

@@ -17,10 +17,13 @@ import (
 )
 
 func TestConstructors(t *testing.T) {
-	token := func(context.Context) (string, error) { return "secret", nil }
-	c := NewClient(token)
-	if got, err := c.Token(context.Background()); got != "secret" || err != nil {
-		t.Fatalf("Token() = %q, %v", got, err)
+	store := newMemoryStore(Credential{FallbackToken: "secret"})
+	c := NewClient(store)
+	if store.loads.Load() != 0 || store.updates.Load() != 0 {
+		t.Fatal("constructor performed I/O")
+	}
+	if got, err := c.accessToken(context.Background()); got.token != "secret" || !got.fallback || err != nil {
+		t.Fatalf("accessToken() = %#v, %v", got, err)
 	}
 	if c.BaseURL != "https://api.openai.com/v1" || c.HTTPClient != http.DefaultClient || c.Logger != nil {
 		t.Fatalf("unexpected client defaults: %#v", c)
@@ -65,7 +68,9 @@ func TestPromptFinalMessage(t *testing.T) {
 
 func TestPromptError(t *testing.T) {
 	want := errors.New("token unavailable")
-	c := NewClient(func(context.Context) (string, error) { return "", want })
+	store := newMemoryStore(Credential{})
+	store.loadErr = want
+	c := NewClient(store)
 	s := NewSession("model", "low", "", nil)
 	if got, err := c.Prompt(context.Background(), s, "hello"); got != "" || !errors.Is(err, want) {
 		t.Fatalf("Prompt() = %q, %v", got, err)
@@ -102,10 +107,10 @@ func TestPromptUTF8Validation(t *testing.T) {
 						requests++
 						return completedResponse([]map[string]any{{"type": "message", "role": "assistant", "content": "done"}}), nil
 					})
-					c.Token = func(context.Context) (string, error) {
+					c.store = credentialStoreFuncs{load: func(context.Context) (Credential, error) {
 						tokens++
-						return "token", nil
-					}
+						return Credential{FallbackToken: "token"}, nil
+					}}
 					c.Logger = log.New(&logs, "", 0)
 					s := NewSession("model", "low", "", nil)
 					var history []map[string]any
@@ -204,7 +209,7 @@ func TestPromptFunctionTimeout(t *testing.T) {
 		if _, err := c.Prompt(context.Background(), NewSession("model", "low", "", []Function{f}), "hello"); err != nil {
 			t.Fatal(err)
 		}
-		if callContext == nil || !errors.Is(callContext.Err(), context.DeadlineExceeded) || time.Since(start) != 5*time.Minute {
+		if callContext == nil || !errors.Is(callContext.Err(), context.DeadlineExceeded) || time.Since(start) != 30*time.Minute {
 			t.Fatalf("function timeout context = %v, elapsed = %v", callContext, time.Since(start))
 		}
 	})
