@@ -1,0 +1,115 @@
+Agent harness improvements
+
+Prioritize execution reliability and verification before adding planning machinery.
+Keep the single-agent design. Preserve scope discipline, task-start snapshots,
+disposable benchmarks, uncached tests, fuzzing, and differential checks.
+
+P0: Make validation results explicit
+
+Prevent intermediate script failures from appearing as successful checks merely
+because the final command prints a log. Use fail-fast execution where appropriate
+and capture each required check's status independently.
+
+Observed examples: A Python rewrite raised "ValueError: substring not found",
+gofmt reported syntax errors, and the package tests failed to compile, yet the
+shell result reported exit_code="0". Another result reported zero even though
+compilation failed with 'function/edit.go:7:2: "fmt" imported and not used'.
+The agent recovered by reading the output, not because execution status identified
+the failed checks.
+
+Minimal reproduction: Run 'go test ./function > result.txt 2>&1; cat result.txt'
+with a compilation error present. The successful cat masks the failed test's
+exit status. Printing diagnostics must not turn a failed check into a pass.
+
+Record the command, working directory, terminal status, exit code, output artifact,
+and source snapshot covered by each validation result. Distinguish process failure
+from output-capture failure. Never equate a successful wrapper with passing tests.
+
+Acceptance: A failing transformation, formatter, or test followed by a successful
+log-printing command cannot produce a passing validation result.
+
+P0: Give background jobs a reliable lifecycle
+
+Reuse the subprocess runner to provide a small start/wait/cancel facility. Assign
+job IDs, separate output storage from the foreground capture stream, and always
+record terminal status, including failure and cancellation. Replace PID polling
+and ad hoc .exit files with this facility. Prevent stale results from earlier runs.
+Keep cancellation behavior explicit and preserve existing guarantees.
+
+Observed example: The agent launched background vet and race checks with a shell
+subprocess followed by '&', without fully detaching its output handles. About five
+seconds later, the foreground tool returned both exit_code="0" and
+error="exec: WaitDelay expired before I/O complete". The agent then used ps,
+pgrep, repeated log reads, and .exit files to determine validation progress.
+The capture error is consistent with inherited output pipes remaining open.
+
+Acceptance: A background job cannot hold a completed foreground command's capture
+pipes open. Failed jobs become terminal rather than appearing to run forever.
+Test success, failure, cancellation, inherited output handles, and repeated runs.
+
+P1: Preserve operational state across compaction
+
+Maintain a short agent-updated checkpoint that the harness preserves separately
+from opaque conversation compaction. Include current scope and exclusions,
+completed and pending work, the task-start snapshot, active job IDs, artifact
+locations, and the latest validated source state. Store facts, not reasoning prose.
+
+Observed example: After compaction, the agent repeated workspace and build-file
+inspection, including pwd, git status, Makefile, .gitignore, and README reads.
+It also recovered temporary artifact locations through shell pointer files.
+This illustrates reacquisition overhead, but does not prove compaction lost
+necessary information or that every repeated read was avoidable.
+
+Acceptance: After compaction, the agent can resume an unfinished task and wait for
+an existing job without rediscovering temporary paths or launching duplicate work.
+Test this explicitly with an active validation job and a pending edit restriction.
+
+P2: Reduce fragile edits and oversized inspection output
+
+Encourage one coherent edit followed by diff inspection, formatting, and a compile
+check before unrelated changes. Evaluate a small patch operation with exact-match
+preconditions. For bulk transformations, validate all boundaries and construct
+replacements before writing files. Do not ban shell or Python.
+
+Observed example: A response-handling extraction script wrote a shortened
+provider/session.go before failing to find an indentation-sensitive substring.
+The expected response helper files did not exist, so gofmt and subsequent reads
+failed too. Retrying the script required recovery from the task-start copy.
+A later attempt generated 'return ErrInvalidRequest, false' and the next 'case'
+on the same line, causing another formatting failure.
+
+Prefer bounded source inspection. Save full command output as an artifact and
+return a bounded preview with explicit truncation metadata and a retrieval method.
+Do not assume dedicated file tools enforce restrictions that unrestricted Bash
+can bypass.
+
+Observed example: A command concatenated large portions of response tests and
+invariant tests into one result, which the tool marked truncated="true". Across
+the run, 79 of 81 tool calls used Bash; dedicated file tools did not govern most
+inspection or mutation. This is not evidence of a security violation, but it means
+their file-operation safeguards were not universal enforcement boundaries.
+
+Acceptance: A failed transformation precondition leaves files unchanged, and
+truncated output remains retrievable without rerunning the command.
+
+P2: Add enough telemetry to evaluate improvements
+
+Record request durations, effective model settings, token usage when available,
+compaction sizes, job lifecycle events, and validation snapshot identifiers.
+Preserve credential fallback reasons without recording secrets.
+
+Observed example: The run exposed 81 tool calls and roughly 737,000 characters of
+tool output, but no request-duration or token-usage records. Those totals cannot
+establish token cost or explain whether latency came from model requests,
+compaction, checks, or polling. A credential fallback reported
+reason=usage_limit_reached, but the records did not expose its request-level cost.
+
+Turn the observed failures into deterministic harness regression tests. Include
+masked intermediate failures, inherited output handles, stale validation results,
+and compaction with an active job. Test that credential fallback does not duplicate
+mutating tool execution; no such duplication was observed, so treat it as a
+preventive regression case rather than an established defect.
+
+Acceptance: Compare future runs on the same tasks using completion quality,
+repair iterations, tool calls, latency, and token usage. Keep observed failures
+separate from hypothetical risks and unmeasured costs.
